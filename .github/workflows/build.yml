@@ -31,9 +31,10 @@ jobs:
         run: |
           cd ncnn
           mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DNCNN_VULKAN=ON -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_SYSTEM_GLSLANG=ON -DNCNN_BUILD_BENCHMARK=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DNCNN_VULKAN=ON -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_SYSTEM_GLSLANG=ON -DNCNN_BUILD_BENCHMARK=OFF
           make -j4
           sudo make install
+          sudo ldconfig
 
       - name: Build ncnn_mobileclip
         run: |
@@ -42,7 +43,7 @@ jobs:
           sed -i '/set(ncnn_INCLUDE_DIRS/d' CMakeLists.txt
           sed -i '/set(OpenCV_DIR/d' CMakeLists.txt
           mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_BUILD_TYPE=Release -Dncnn_DIR=/usr/local/lib/cmake/ncnn
           make -j4
 
       - name: Collect artifacts
