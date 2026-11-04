@@ -19,7 +19,7 @@ jobs:
       - name: Checkout ncnn_mobileclip
         uses: actions/checkout@v4
         with:
-          repository: futz12/ncnn_mobileclip
+          repository: hhxiaozhi/ncnn_mobileclip
           path: ncnn_mobileclip
 
       - name: Install deps
