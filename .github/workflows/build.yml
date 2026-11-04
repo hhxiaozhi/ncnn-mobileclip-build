@@ -24,6 +24,8 @@ jobs:
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Build inside ARM64 container
         run: |
@@ -60,7 +62,7 @@ jobs:
           BUILD_SH
           chmod +x build.sh
 
-          docker run --rm -v $PWD:/work arm64v8/ubuntu:24.04 bash -c 'cd /work && ./build.sh'
+          docker run --platform linux/arm64 --rm -v $PWD:/work arm64v8/ubuntu:24.04 bash -c 'cd /work && ./build.sh'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
