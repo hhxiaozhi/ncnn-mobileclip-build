@@ -1,0 +1,69 @@
+name: Build ncnn_mobileclip for ARM64 Linux
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ncnn
+        uses: actions/checkout@v4
+        with:
+          repository: Tencent/ncnn
+          path: ncnn
+          submodules: recursive
+
+      - name: Checkout ncnn_mobileclip
+        uses: actions/checkout@v4
+        with:
+          repository: futz12/ncnn_mobileclip
+          path: ncnn_mobileclip
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build inside ARM64 container
+        run: |
+          cat <<'BUILD_SH' > build.sh
+          #!/bin/bash
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y cmake g++ make libopencv-dev libvulkan-dev
+
+          cd /work/ncnn
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DNCNN_VULKAN=ON -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_SYSTEM_GLSLANG=ON -DNCNN_BUILD_BENCHMARK=OFF
+          make -j4
+          make install
+
+          cd /work/ncnn_mobileclip/ncnn_mobileclip_infer
+          sed -i '/set(ncnn_DIR/d' CMakeLists.txt
+          sed -i '/set(ncnn_INCLUDE_DIRS/d' CMakeLists.txt
+          sed -i '/set(OpenCV_DIR/d' CMakeLists.txt
+
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release
+          make -j4
+
+          mkdir -p /work/output
+          cp ncnn_mobileclip_full /work/output/
+          cp ../bpe_simple_vocab_16e6.txt /work/output/ 2>/dev/null || true
+          cp ../vocab.txt /work/output/ 2>/dev/null || true
+          cp /usr/local/lib/libncnn* /work/output/ 2>/dev/null || true
+          cp /usr/lib/aarch64-linux-gnu/libopencv* /work/output/ 2>/dev/null || true
+          echo '=== 产物 ==='
+          ls -lh /work/output
+          BUILD_SH
+          chmod +x build.sh
+
+          docker run --rm -v $PWD:/work arm64v8/ubuntu:24.04 bash -c 'cd /work && ./build.sh'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ncnn_mobileclip_arm64
+          path: output/
