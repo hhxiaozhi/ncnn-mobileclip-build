@@ -1,5 +1,5 @@
 
-name: Compile MobileCLIP ONNX to QNN
+name: Compile MobileCLIP to QNN Context Binary
 
 on:
   workflow_dispatch:
@@ -20,7 +20,6 @@ jobs:
           pip install qai-hub
       - name: Download Model
         run: |
-          # 从之前创建的 Release 下载真实模型
           wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
           ls -lh mobileclip_image.onnx
       - name: Configure qai-hub
@@ -28,37 +27,52 @@ jobs:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
-      - name: Submit Compile Job
+      - name: Submit Compile and Link Jobs
         run: |
-          cat > compile.py <<'PYEOF'
+          cat > compile_link.py <<'PYEOF'
           import qai_hub as hub
+          import sys
 
           device = hub.Device("Samsung Galaxy S23 (Family)")
 
+          # 1. 编译为 qnn_dlc
+          print("Submitting compile job...")
           compile_job = hub.submit_compile_job(
               model="mobileclip_image.onnx",
               device=device,
               input_specs={"pixel_values": (1, 3, 224, 224)},
-              options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
-              name="mobileclip_image compile",
+              options="--target_runtime qnn_dlc --truncate_64bit_io",
+              name="mobileclip compile",
           )
-          print(f"Submitted compile job: {compile_job.job_id}")
-
           compile_job.wait()
-          status = compile_job.get_status()
-          print(f"Final status: {status}")
+          print(f"Compile status: {compile_job.get_status()}")
 
-          if status != "SUCCESS":
-              print(f"Compile failed. Check job {compile_job.job_id} in the AI Hub dashboard.", file=sys.stderr)
+          if compile_job.get_status() != "SUCCESS":
               sys.exit(1)
 
-          compile_job.download_target_model("mobileclip_qnn.bin")
+          # 2. 链接为 context binary
+          print("Submitting link job...")
+          target_model = compile_job.get_target_model()
+          link_job = hub.submit_link_job(
+              model=target_model,
+              device=device,
+              name="mobileclip link",
+          )
+          link_job.wait()
+          print(f"Link status: {link_job.get_status()}")
+
+          if link_job.get_status() != "SUCCESS":
+              sys.exit(1)
+
+          # 3. 下载真正的 .bin 文件
+          print("Downloading context binary...")
+          link_job.download_target_model("mobileclip_qnn.bin")
           print("Downloaded successfully")
           PYEOF
-          python compile.py
+          python compile_link.py
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mobileclip-qnn
-          path: "*.zip"
+          path: mobileclip_qnn.bin
           if-no-files-found: error
