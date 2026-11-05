@@ -7,7 +7,7 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,11 +27,10 @@ jobs:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
-      - name: Quantize + Compile + Link
+      - name: Compile + Link
         run: |
           cat > run.py <<'PYEOF'
           import sys, traceback
-          import numpy as np
           import qai_hub as hub
 
           device = hub.Device("Samsung Galaxy S21 (Family)")
@@ -39,45 +38,13 @@ jobs:
               model = hub.upload_model("mobileclip_image.onnx")
               print(f"model uploaded: {model}", flush=True)
 
-              calib = {"pixel_values": [np.random.rand(1,3,224,224).astype(np.float32) for _ in range(100)]}
-              calib_ds = hub.upload_dataset(calib)
-              print(f"calib uploaded: {calib_ds}", flush=True)
-
-              # 关键改动：加 --range_scheme min_max 改变 AIMET 决策
-              try:
-                  quant_job = hub.submit_quantize_job(
-                      model=model,
-                      calibration_data=calib_ds,
-                      weights_dtype=hub.QuantizeDtype.INT8,
-                      activations_dtype=hub.QuantizeDtype.INT8,
-                      options="--range_scheme min_max",
-                      name="mobileclip quantize w8a8 minmax",
-                  )
-              except Exception as e:
-                  print(f"with options failed: {e}", flush=True)
-                  print("retry without options", flush=True)
-                  quant_job = hub.submit_quantize_job(
-                      model=model,
-                      calibration_data=calib_ds,
-                      weights_dtype=hub.QuantizeDtype.INT8,
-                      activations_dtype=hub.QuantizeDtype.INT8,
-                      name="mobileclip quantize w8a8",
-                  )
-              print(f"quant job: {quant_job.job_id}", flush=True)
-              quant_job.wait()
-              st = quant_job.get_status()
-              print(f"quant status: {st}", flush=True)
-              if st != "SUCCESS":
-                  sys.exit(1)
-              quant_model = quant_job.get_target_model()
-
-              # compile 用干净的 options（不带 qnn_options）
+              # 直接从 fp32 编译，强制 int8 + quantize_io
               compile_job = hub.submit_compile_job(
-                  model=quant_model,
+                  model=model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
-                  options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io",
-                  name="mobileclip compile minmax",
+                  options="--target_runtime qnn_dlc --quantize_full_type int8 --quantize_io --truncate_64bit_io",
+                  name="mobileclip compile int8 io",
               )
               print(f"compile job: {compile_job.job_id}", flush=True)
               compile_job.wait()
@@ -86,12 +53,11 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
-              # link 也用干净 options
               link_job = hub.submit_link_job(
                   models=[compile_job.get_target_model()],
                   device=device,
                   options="",
-                  name="mobileclip link minmax",
+                  name="mobileclip link int8 io",
               )
               print(f"link job: {link_job.job_id}", flush=True)
               link_job.wait()
