@@ -1,5 +1,5 @@
 
-name: Compile MobileCLIP ONNX to QNN Context Binary
+name: Test AI Hub Compile with MobileNetV2
 
 on:
   workflow_dispatch:
@@ -7,62 +7,59 @@ on:
 jobs:
   compile:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-      - name: Download Model
+      - name: Install Deps
         run: |
-          wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
-      - name: Install qai-hub
+          pip install torch torchvision onnx "qai-hub[onnx]"
+      - name: Export MobileNetV2 ONNX
         run: |
-          pip install "qai-hub[onnx]"
+          python -c "
+          import torch, torchvision
+          model = torchvision.models.mobilenet_v2(pretrained=True).eval()
+          dummy = torch.randn(1, 3, 224, 224)
+          torch.onnx.export(model, dummy, 'mobilenet_v2.onnx', opset_version=13, input_names=['input'])
+          print('Exported mobilenet_v2.onnx')
+          "
       - name: Configure qai-hub
         env:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
-      - name: Write compile.py
+      - name: Submit Compile Job
         run: |
           cat > compile.py <<'PYEOF'
-          import os
-          import sys
-          import pathlib
+          import os, sys, pathlib
           import qai_hub as hub
 
-          MODEL_PATH = "mobileclip_image.onnx"
-          OUTPUT_PATH = "mobileclip_image_qnn.bin"
+          device = hub.Device("Samsung Galaxy S23")
 
-          device = hub.Device("Samsung Galaxy S23 (Family)")
-
-          compile_jobs, link_job = hub.submit_compile_and_link_jobs(
-              models=[MODEL_PATH],
+          compile_job = hub.submit_compile_job(
+              model="mobilenet_v2.onnx",
               device=device,
-              input_specs=[{"pixel_values": (1, 3, 224, 224)}],
-              compile_options="--quantize_full_type float16",
-              name="mobileclip_image onnx->qnn sm8350",
+              options="--target_runtime qnn_context_binary --quantize_full_type float16",
+              name="mobilenet_v2 test",
           )
-          print(f"Submitted compile job: {compile_jobs[0].job_id}")
+          print(f"Submitted compile job: {compile_job.job_id}")
 
-          link_job.wait()
-          status = link_job.get_status()
+          compile_job.wait()
+          status = compile_job.get_status()
           print(f"Final status: {status}")
 
           if status != hub.JobStatus.SUCCESS:
-              print(f"Link job failed. Check job {link_job.job_id} in the AI Hub dashboard.", file=sys.stderr)
               sys.exit(1)
 
-          link_job.download_target_model(OUTPUT_PATH)
-          size = pathlib.Path(OUTPUT_PATH).stat().st_size / 1024 / 1024
-          print(f"Downloaded {OUTPUT_PATH} ({size:.1f} MiB)")
+          compile_job.download_target_model("mobilenet_v2.bin")
+          print("Downloaded mobilenet_v2.bin")
           PYEOF
-      - name: Run compile
-        run: python compile.py
-      - name: Upload context binary
+          python compile.py
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mobileclip-image-qnn-bin
-          path: mobileclip_image_qnn.bin
+          name: mobilenet-v2-qnn
+          path: mobilenet_v2.bin
           if-no-files-found: error
