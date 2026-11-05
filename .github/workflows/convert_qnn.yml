@@ -1,0 +1,41 @@
+
+name: Convert ONNX to QNN for Hexagon 780
+on: [workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip python3 python3-pip
+          pip3 install onnx numpy
+      - name: Download QNN SDK
+        run: |
+          wget -q https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.31.0.250130/v2.31.0.250130.zip
+          unzip -q v2.31.0.250130.zip
+      - name: Convert ONNX
+        run: |
+          export QNN_SDK_ROOT=$(pwd)/qairt/2.31.0.250130
+          export PYTHONPATH=$QNN_SDK_ROOT/lib/python
+          export PATH=$QNN_SDK_ROOT/bin/x86_64-linux-clang:$PATH
+          # 执行转换
+          python3 $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter \
+            --input_network ./mobileclip_image_encoder.onnx \
+            --output_path ./mobileclip_qnn.cpp \
+            --input_dim pixel_values 1,3,224,224
+      - name: Generate Context Binary
+        run: |
+          export QNN_SDK_ROOT=$(pwd)/qairt/2.31.0.250130
+          export LD_LIBRARY_PATH=$QNN_SDK_ROOT/lib/x86_64-linux-clang:$LD_LIBRARY_PATH
+          # 这里使用 x86 模拟器编译生成 .bin
+          $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-context-binary-generator \
+            --model ./mobileclip_qnn.cpp \
+            --backend $QNN_SDK_ROOT/lib/x86_64-linux-clang/libQnnHtp.so \
+            --binary_file mobileclip.bin
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobileclip-qnn
+          path: mobileclip.bin
