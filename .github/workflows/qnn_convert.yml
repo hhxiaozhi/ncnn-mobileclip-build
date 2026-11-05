@@ -27,49 +27,54 @@ jobs:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
+      - name: Inspect API signature
+        run: |
+          python -c "
+          import qai_hub, inspect
+          print('qai_hub version:', getattr(qai_hub, '__version__', 'unknown'))
+          print('signature:', inspect.signature(qai_hub.submit_compile_and_link_jobs))
+          for d in qai_hub.get_devices():
+              if 'S21' in d.name:
+                  print('DEVICE:', d.name, '->', d.attributes)
+          "
       - name: Submit Compile and Link Jobs
         run: |
           cat > compile_link.py <<'PYEOF'
-          import qai_hub as hub
           import sys
           import traceback
+          import qai_hub as hub
 
-          # 换成 SM8350 (骁龙 888) 的设备族
-          device = hub.Device("Samsung Galaxy S21 (Family)")
+          def main() -> int:
+              device = hub.Device("Samsung Galaxy S21 (Family)")
 
-          print("Submitting compile job...")
-          compile_job = hub.submit_compile_job(
-              model="mobileclip_image.onnx",
-              device=device,
-              input_specs={"pixel_values": (1, 3, 224, 224)},
-              options="--target_runtime qnn_dlc --truncate_64bit_io",
-              name="mobileclip compile",
-          )
-          compile_job.wait()
-          print(f"Compile status: {compile_job.get_status()}")
+              try:
+                  # 注意：返回单个 LinkJob，不是 (compile_jobs, link_job)
+                  link_job = hub.submit_compile_and_link_jobs(
+                      models=["mobileclip_image.onnx"],
+                      device=device,
+                      input_specs={"pixel_values": (1, 3, 224, 224)},
+                      compile_options="--truncate_64bit_io",
+                      link_options="",
+                      name="mobileclip compile+link",
+                  )
+              except Exception:
+                  traceback.print_exc()
+                  return 1
 
-          if compile_job.get_status() != "SUCCESS":
-              sys.exit(1)
-
-          print("Submitting link job...")
-          try:
-              # 第一个参数改成 models，传一个列表；options 留空
-              link_job = hub.submit_link_job(
-                  models=[compile_job.get_target_model()],
-                  device=device,
-                  options="",
-                  name="mobileclip link",
-              )
               link_job.wait()
-              print(f"Link status: {link_job.get_status()}")
-              if link_job.get_status() != "SUCCESS":
-                  sys.exit(1)
-              print("Downloading context binary...")
+              status = link_job.get_status()
+              print(f"link job status: {status}")
+              print(f"job: {link_job}")
+
+              if status != "SUCCESS":
+                  return 1
+
               link_job.download_target_model("mobileclip_qnn.bin")
-              print("Downloaded successfully")
-          except Exception:
-              traceback.print_exc()
-              sys.exit(1)
+              print("downloaded mobileclip_qnn.bin")
+              return 0
+
+          if __name__ == "__main__":
+              sys.exit(main())
           PYEOF
           python compile_link.py
       - name: Upload Artifact
