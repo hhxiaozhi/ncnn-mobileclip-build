@@ -16,7 +16,6 @@ jobs:
       - name: Install Deps
         run: |
           python -m pip install --upgrade pip
-          # 强制使用二进制轮子，避免从源码编译 onnx
           pip install --only-binary=:all: torch torchvision onnx onnxscript
           pip install qai-hub
       - name: Export MobileNetV2 ONNX
@@ -44,8 +43,9 @@ jobs:
               model="mobilenet_v2.onnx",
               device=device,
               input_specs={"input": (1, 3, 224, 224)},
-              options="--target_runtime qnn_context_binary --quantize_full_type float16 --qairt_version 2.31 --truncate_64bit_io",
-              name="mobilenet_v2 test v5",
+              # 换成了官方报错提示中支持的 precompiled_qnn_onnx
+              options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
+              name="mobilenet_v2 test v6",
           )
           print(f"Submitted compile job: {compile_job.job_id}")
 
