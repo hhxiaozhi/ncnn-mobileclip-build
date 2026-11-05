@@ -27,11 +27,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake g++ make libopencv-dev libvulkan-dev glslang-tools
 
-      - name: Build ncnn
+      - name: Build ncnn (CPU only, no Vulkan)
         run: |
           cd ncnn
           mkdir -p build && cd build
-          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DNCNN_VULKAN=ON -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_EXAMPLES=OFF -DNCNN_SYSTEM_GLSLANG=ON -DNCNN_BUILD_BENCHMARK=OFF
+          cmake .. -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DNCNN_VULKAN=OFF \
+            -DNCNN_BUILD_TOOLS=ON \
+            -DNCNN_BUILD_EXAMPLES=OFF \
+            -DNCNN_BUILD_BENCHMARK=OFF
           make -j4
           sudo make install
           sudo ldconfig
@@ -46,8 +51,8 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p output
-          cp ncnn_mobileclip/ncnn_mobileclip_infer/build/ncnn_mobileclip_vulkan output/
-          cp ncnn_mobileclip/ncnn_mobileclip_infer/build/preprocess.spv output/
+          cp ncnn_mobileclip/ncnn_mobileclip_infer/build/ncnn_mobileclip_vulkan output/ 2>/dev/null || true
+          cp ncnn_mobileclip/ncnn_mobileclip_infer/build/preprocess.spv output/ 2>/dev/null || true
           cp /usr/local/lib/libncnn* output/ 2>/dev/null || true
           ls -lh output
 
