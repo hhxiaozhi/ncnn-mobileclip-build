@@ -27,16 +27,6 @@ jobs:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
-      - name: Inspect API
-        run: |
-          python -c "
-          import qai_hub, inspect
-          print('version:', qai_hub.__version__)
-          print('has submit_quantize_job:', hasattr(qai_hub, 'submit_quantize_job'))
-          if hasattr(qai_hub, 'submit_quantize_job'):
-              print(inspect.signature(qai_hub.submit_quantize_job))
-          print('QuantizeDtype:', [x for x in dir(qai_hub) if 'QuantizeDtype' in x or 'Dtype' in x])
-          "
       - name: Quantize + Compile + Link
         run: |
           cat > run.py <<'PYEOF'
@@ -46,22 +36,20 @@ jobs:
 
           device = hub.Device("Samsung Galaxy S21 (Family)")
           try:
-              # 1. 上传模型
               model = hub.upload_model("mobileclip_image.onnx")
               print(f"model uploaded: {model}", flush=True)
 
-              # 2. 生成 100 张随机校准数据（fp32 归一化后）
               calib = {"pixel_values": [np.random.rand(1,3,224,224).astype(np.float32) for _ in range(100)]}
               calib_ds = hub.upload_dataset(calib)
               print(f"calib uploaded: {calib_ds}", flush=True)
 
-              # 3. PTQ 量化（w8a16，HTP v69 官方推荐）
+              # 改成 w8a8（weights=INT8, activations=INT8）
               quant_job = hub.submit_quantize_job(
                   model=model,
                   calibration_data=calib_ds,
                   weights_dtype=hub.QuantizeDtype.INT8,
-                  activations_dtype=hub.QuantizeDtype.INT16,
-                  name="mobileclip quantize w8a16",
+                  activations_dtype=hub.QuantizeDtype.INT8,
+                  name="mobileclip quantize w8a8",
               )
               print(f"quant job: {quant_job.job_id}", flush=True)
               quant_job.wait()
@@ -70,15 +58,13 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
               quant_model = quant_job.get_target_model()
-              print(f"quant model: {quant_model}", flush=True)
 
-              # 4. 编译量化后的模型，加 --quantize_io
               compile_job = hub.submit_compile_job(
                   model=quant_model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
                   options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io",
-                  name="mobileclip compile w8a16",
+                  name="mobileclip compile w8a8",
               )
               print(f"compile job: {compile_job.job_id}", flush=True)
               compile_job.wait()
@@ -87,12 +73,11 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
-              # 5. Link 成 context binary
               link_job = hub.submit_link_job(
                   models=[compile_job.get_target_model()],
                   device=device,
                   options="",
-                  name="mobileclip link w8a16",
+                  name="mobileclip link w8a8",
               )
               print(f"link job: {link_job.job_id}", flush=True)
               link_job.wait()
@@ -101,7 +86,6 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
-              # 6. 下载
               link_job.download_target_model("mobileclip_qnn.bin")
               print("downloaded mobileclip_qnn.bin", flush=True)
           except Exception:
