@@ -25,7 +25,6 @@ jobs:
           model = torchvision.models.mobilenet_v2(pretrained=True).eval()
           dummy = torch.randn(1, 3, 224, 224)
           torch.onnx.export(model, dummy, 'mobilenet_v2_raw.onnx', opset_version=13, input_names=['input'])
-          # 强制内嵌所有外部权重数据
           m = onnx.load('mobilenet_v2_raw.onnx')
           onnx.save(m, 'mobilenet_v2.onnx', save_as_external_data=False)
           print('Exported and inlined mobilenet_v2.onnx')
@@ -47,7 +46,7 @@ jobs:
               device=device,
               input_specs={"input": (1, 3, 224, 224)},
               options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
-              name="mobilenet_v2 test v7",
+              name="mobilenet_v2 test v8",
           )
           print(f"Submitted compile job: {compile_job.job_id}")
 
@@ -55,8 +54,8 @@ jobs:
           status = compile_job.get_status()
           print(f"Final status: {status}")
 
-          if status != hub.JobStatus.SUCCESS:
-              print(f"Compile failed. Check job {compile_job.job_id} in the AI Hub dashboard.", file=sys.stderr)
+          if status != "SUCCESS":
+              print(f"Compile failed.", file=sys.stderr)
               sys.exit(1)
 
           compile_job.download_target_model("mobilenet_v2.bin")
