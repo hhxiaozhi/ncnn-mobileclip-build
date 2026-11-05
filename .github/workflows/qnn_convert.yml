@@ -21,6 +21,12 @@ jobs:
       - name: Install qai-hub
         run: |
           pip install "qai-hub[onnx]"
+      - name: Configure qai-hub
+        run: |
+          mkdir -p ~/.qai_hub
+          echo "[api]" > ~/.qai_hub/client.ini
+          echo "api_token = ${{ secrets.QAI_HUB_API_TOKEN }}" >> ~/.qai_hub/client.ini
+          cat ~/.qai_hub/client.ini
       - name: Write compile.py
         run: |
           cat > compile.py <<'PYEOF'
@@ -31,10 +37,6 @@ jobs:
 
           MODEL_PATH = "mobileclip_image.onnx"
           OUTPUT_PATH = "mobileclip_image_qnn.bin"
-
-          if not os.environ.get("QAI_HUB_API_TOKEN"):
-              print("ERROR: QAI_HUB_API_TOKEN is not set.", file=sys.stderr)
-              sys.exit(2)
 
           device = hub.Device("Samsung Galaxy S23")
 
