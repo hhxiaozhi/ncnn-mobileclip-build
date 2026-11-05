@@ -43,7 +43,6 @@ jobs:
               calib_ds = hub.upload_dataset(calib)
               print(f"calib uploaded: {calib_ds}", flush=True)
 
-              # 改成 w8a8（weights=INT8, activations=INT8）
               quant_job = hub.submit_quantize_job(
                   model=model,
                   calibration_data=calib_ds,
@@ -59,12 +58,13 @@ jobs:
                   sys.exit(1)
               quant_model = quant_job.get_target_model()
 
+              # 关键：compile 阶段强制 UINT8
               compile_job = hub.submit_compile_job(
                   model=quant_model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
-                  options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io",
-                  name="mobileclip compile w8a8",
+                  options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io --qnn_options default_graph_htp_precision=UINT8",
+                  name="mobileclip compile uint8 forced",
               )
               print(f"compile job: {compile_job.job_id}", flush=True)
               compile_job.wait()
@@ -73,11 +73,12 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
+              # link 阶段也强制 UINT8
               link_job = hub.submit_link_job(
                   models=[compile_job.get_target_model()],
                   device=device,
-                  options="",
-                  name="mobileclip link w8a8",
+                  options="--qnn_options default_graph_htp_precision=UINT8",
+                  name="mobileclip link uint8 forced",
               )
               print(f"link job: {link_job.job_id}", flush=True)
               link_job.wait()
