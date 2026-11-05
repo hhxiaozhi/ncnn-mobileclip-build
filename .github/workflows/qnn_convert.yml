@@ -38,15 +38,15 @@ jobs:
               device = hub.Device("Samsung Galaxy S21 (Family)")
 
               try:
+                  # 用 float16 全量化（含 I/O），解决 pixel_values 浮点输入问题
                   compile_jobs, link_job = hub.submit_compile_and_link_jobs(
                       models=["mobileclip_image.onnx"],
                       device=device,
                       graph_names=["mobileclip"],
                       input_specs={"pixel_values": (1, 3, 224, 224)},
-                      # 加上量化选项，强制输入输出和权重全部量化
-                      compile_options="--truncate_64bit_io --quantize_full_type int8",
+                      compile_options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
                       link_options="",
-                      name="mobileclip compile+link int8",
+                      name="mobileclip compile+link float16",
                   )
               except Exception:
                   traceback.print_exc()
