@@ -17,7 +17,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --only-binary=:all: onnx onnxscript
-          pip install qai-hub
+          pip install --upgrade qai-hub
       - name: Download Model
         run: |
           wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
@@ -32,8 +32,10 @@ jobs:
           cat > compile_link.py <<'PYEOF'
           import qai_hub as hub
           import sys
+          import traceback
 
-          device = hub.Device("Samsung Galaxy S23 (Family)")
+          # 换成 SM8350 (骁龙 888) 的设备族
+          device = hub.Device("Samsung Galaxy S21 (Family)")
 
           print("Submitting compile job...")
           compile_job = hub.submit_compile_job(
@@ -50,13 +52,12 @@ jobs:
               sys.exit(1)
 
           print("Submitting link job...")
-          target_model = compile_job.get_target_model()
-
           try:
+              # 第一个参数改成 models，传一个列表；options 留空
               link_job = hub.submit_link_job(
-                  model=target_model,
+                  models=[compile_job.get_target_model()],
                   device=device,
-                  options="--target_runtime qnn_context_binary",
+                  options="",
                   name="mobileclip link",
               )
               link_job.wait()
@@ -66,8 +67,8 @@ jobs:
               print("Downloading context binary...")
               link_job.download_target_model("mobileclip_qnn.bin")
               print("Downloaded successfully")
-          except Exception as e:
-              print(f"Exception during link: {e}")
+          except Exception:
+              traceback.print_exc()
               sys.exit(1)
           PYEOF
           python compile_link.py
