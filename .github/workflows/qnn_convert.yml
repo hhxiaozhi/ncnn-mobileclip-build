@@ -46,7 +46,7 @@ jobs:
               device=device,
               input_specs={"input": (1, 3, 224, 224)},
               options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
-              name="mobilenet_v2 test v8",
+              name="mobilenet_v2 test v9",
           )
           print(f"Submitted compile job: {compile_job.job_id}")
 
@@ -58,13 +58,15 @@ jobs:
               print(f"Compile failed.", file=sys.stderr)
               sys.exit(1)
 
+          # 下载下来实际是个 zip 包，名字会自动加 .onnx.zip
           compile_job.download_target_model("mobilenet_v2.bin")
-          print("Downloaded mobilenet_v2.bin")
+          print("Downloaded successfully")
           PYEOF
           python compile.py
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mobilenet-v2-qnn
-          path: mobilenet_v2.bin
+          # 修改匹配规则，抓取生成的 zip 包
+          path: mobilenet_v2.bin.onnx.zip
           if-no-files-found: error
