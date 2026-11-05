@@ -8,8 +8,6 @@ jobs:
   compile:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
-    env:
-      QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,11 +20,11 @@ jobs:
         run: |
           pip install "qai-hub[onnx]"
       - name: Configure qai-hub
+        env:
+          QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
-          mkdir -p ~/.qai_hub
-          echo "[api]" > ~/.qai_hub/client.ini
-          echo "api_token = ${{ secrets.QAI_HUB_API_TOKEN }}" >> ~/.qai_hub/client.ini
-          cat ~/.qai_hub/client.ini
+          # 使用官方 CLI 进行配置，这是唯一能生效的路径
+          qai-hub configure --api_token $QAI_HUB_API_TOKEN
       - name: Write compile.py
         run: |
           cat > compile.py <<'PYEOF'
