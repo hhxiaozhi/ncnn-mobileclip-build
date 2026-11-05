@@ -1,0 +1,57 @@
+
+name: Download QNN SDK aarch64 libs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Install QPM CLI
+        run: |
+          # 下载 QPM3 CLI (Linux)
+          wget -q https://qpm.qualcomm.com/api/static/qpm3/qpm-cli-linux-x86_64 -O /tmp/qpm-cli
+          chmod +x /tmp/qpm-cli
+          /tmp/qpm-cli --version || echo "qpm cli failed"
+      - name: Login QPM
+        env:
+          QPM_USER: ${{ secrets.QPM_USER }}
+          QPM_PASS: ${{ secrets.QPM_PASS }}
+        run: |
+          /tmp/qpm-cli login -u "$QPM_USER" -p "$QPM_PASS" || echo "login failed, will try anyway"
+      - name: List QNN packages
+        run: |
+          /tmp/qpm-cli list -s 2>&1 | grep -i qnn | head -20 || echo "no qnn found"
+          /tmp/qpm-cli list 2>&1 | head -50 || echo "list failed"
+      - name: Install QNN SDK
+        run: |
+          mkdir -p /tmp/qairt
+          /tmp/qpm-cli install qnn --path /tmp/qairt 2>&1 | tail -20 ||           /tmp/qpm-cli install "Qualcomm Neural Processing SDK" --path /tmp/qairt 2>&1 | tail -20 ||           echo "install failed"
+      - name: Find aarch64 libs
+        run: |
+          find /tmp/qairt -type d \( -name "aarch64*" -o -name "hexagon-v68" -o -name "unsigned" \) 2>/dev/null | head -20
+          find /tmp/qairt -name "libQnnHtp.so" 2>/dev/null | head
+          find /tmp/qairt -name "libQnnHtpSkel.so" 2>/dev/null | head
+      - name: Pack libs
+        run: |
+          mkdir -p /tmp/out
+          AARCH_DIR=$(find /tmp/qairt -type d -name "aarch64-android" | head -1)
+          HEXAGON_DIR=$(find /tmp/qairt -type d -name "unsigned" -path "*hexagon*" | head -1)
+          echo "AARCH: $AARCH_DIR"
+          echo "HEXAGON: $HEXAGON_DIR"
+          if [ -n "$AARCH_DIR" ]; then
+            cp -v "$AARCH_DIR"/libQnnHtp.so "$AARCH_DIR"/libQnnSystem.so "$AARCH_DIR"/libQnnHtpV68Stub.so /tmp/out/ 2>/dev/null || true
+            cp -v "$AARCH_DIR"/qnn-net-run /tmp/out/ 2>/dev/null || true
+          fi
+          if [ -n "$HEXAGON_DIR" ]; then
+            cp -v "$HEXAGON_DIR"/libQnnHtpSkel.so /tmp/out/ 2>/dev/null || true
+          fi
+          ls -la /tmp/out/
+      - name: Upload libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-libs
+          path: /tmp/out/*
+          if-no-files-found: warn
