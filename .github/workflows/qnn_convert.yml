@@ -37,13 +37,12 @@ jobs:
               model = hub.upload_model("mobileclip_image.onnx")
               print(f"model uploaded: {model}", flush=True)
 
-              # Step 1: compile
               compile_job = hub.submit_compile_job(
                   model=model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
-                  options="--target_runtime qnn_dlc --quantize_full_type float16 --quantize_io --truncate_64bit_io",
-                  name="mobileclip compile fp16 io",
+                  options="--target_runtime qnn_dlc --truncate_64bit_io",
+                  name="mobileclip compile uint8",
               )
               print(f"compile job: {compile_job.job_id}", flush=True)
               compile_job.wait()
@@ -52,12 +51,11 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
-              # Step 2: link
               link_job = hub.submit_link_job(
                   models=[compile_job.get_target_model()],
                   device=device,
                   options="",
-                  name="mobileclip link fp16 io",
+                  name="mobileclip link uint8",
               )
               print(f"link job: {link_job.job_id}", flush=True)
               link_job.wait()
