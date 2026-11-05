@@ -1,0 +1,61 @@
+
+name: Extract QNN libs (v2)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Try onnxruntime standard wheel
+        run: |
+          mkdir -p /tmp/wheels
+          pip download onnxruntime --only-binary=:all: --no-deps -d /tmp/wheels 2>&1 | tail -5
+          ls -lh /tmp/wheels/ 2>/dev/null || echo "no wheel"
+      - name: Try onnxruntime-gpu / dev
+        run: |
+          pip download onnxruntime-directml --only-binary=:all: --no-deps -d /tmp/wheels 2>&1 | tail -3 || true
+          pip index versions onnxruntime 2>&1 | head -5 || true
+      - name: Unpack standard wheel
+        run: |
+          mkdir -p /tmp/extracted
+          for whl in /tmp/wheels/*.whl; do
+            [ -f "$whl" ] && unzip -o -q "$whl" -d /tmp/extracted
+          done
+          find /tmp/extracted -iname "*qnn*" | head -30
+          find /tmp/extracted -iname "libQnn*" | head -30
+      - name: Try download onnxruntime android AAR from maven
+        run: |
+          mkdir -p /tmp/aar
+          for url in             "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android-qnn/1.22.0/onnxruntime-android-qnn-1.22.0.aar"             "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.22.0/onnxruntime-android-1.22.0.aar"             "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android-qnn/1.20.0/onnxruntime-android-qnn-1.20.0.aar"
+          do
+            name=$(basename "$url")
+            echo "trying $url"
+            wget -q --timeout=20 "$url" -O "/tmp/aar/$name" 2>&1 && echo "OK $name" || echo "FAIL $name"
+          done
+          ls -lh /tmp/aar/ || echo "no aar"
+      - name: Unpack AARs
+        run: |
+          mkdir -p /tmp/aar_ext
+          for a in /tmp/aar/*.aar; do
+            [ -f "$a" ] || continue
+            name=$(basename "$a" .aar)
+            mkdir -p /tmp/aar_ext/$name
+            unzip -o -q "$a" -d /tmp/aar_ext/$name
+            echo "=== $name ==="
+            find /tmp/aar_ext/$name -name "*.so" | head
+          done
+          find /tmp/aar_ext -name "libQnn*" | head -20
+      - name: Collect
+        run: |
+          mkdir -p /tmp/out
+          find /tmp/extracted /tmp/aar_ext -type f -name "libQnn*" -exec cp -v {} /tmp/out/ \;
+          ls -lh /tmp/out/ 2>/dev/null || echo "empty"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-libs-v2
+          path: /tmp/out/*
+          if-no-files-found: warn
