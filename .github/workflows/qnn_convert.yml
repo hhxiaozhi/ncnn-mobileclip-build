@@ -1,45 +1,70 @@
 
-name: QNN Convert via AI Hub
+name: Compile MobileCLIP ONNX to QNN Context Binary
 
 on:
   workflow_dispatch:
 
 jobs:
-  convert:
+  compile:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
       - name: Download Model
         run: |
           wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
-          ls -la *.onnx
-
-      - name: Install Python Deps
+      - name: Install qai-hub
         run: |
-          pip3 install onnx qai-hub
-
-      - name: Submit to AI Hub
-        env:
-          QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
+          pip install "qai-hub[onnx]"
+      - name: Write compile.py
         run: |
-          python3 -c "
-import qai_hub as hub
-import os
-print('Uploading model...')
-job = hub.submit_compile_job(
-    model='mobileclip_image.onnx',
-    device=hub.Device('Snapdragon 888'),
-    options='--target_runtime qnn_context_binary'
-)
-job.wait()
-print('Downloading compiled model...')
-job.download_target_model('model_qnn.bin')
-print('Done')
-          "
+          cat > compile.py <<'PYEOF'
+          import os
+          import sys
+          import pathlib
+          import qai_hub as hub
 
-      - name: Upload Artifact
+          MODEL_PATH = "mobileclip_image.onnx"
+          OUTPUT_PATH = "mobileclip_image_qnn.bin"
+
+          if not os.environ.get("QAI_HUB_API_TOKEN"):
+              print("ERROR: QAI_HUB_API_TOKEN is not set.", file=sys.stderr)
+              sys.exit(2)
+
+          device = hub.Device(attributes="chipset:sm8350")
+
+          compile_job = hub.submit_compile_job(
+              model=MODEL_PATH,
+              device=device,
+              input_specs={"pixel_values": (1, 3, 224, 224)},
+              options="--target_runtime qnn_context_binary --quantize_full_type float16",
+              name="mobileclip_image onnx->qnn sm8350",
+          )
+          print(f"Submitted compile job: {compile_job.job_id}")
+
+          compile_job.wait()
+          status = compile_job.get_status()
+          print(f"Final status: {status}")
+
+          if status != hub.JobStatus.SUCCESS:
+              print(f"Compile failed. Check job {compile_job.job_id} in the AI Hub dashboard.", file=sys.stderr)
+              sys.exit(1)
+
+          compile_job.download_target_model(OUTPUT_PATH)
+          size = pathlib.Path(OUTPUT_PATH).stat().st_size / 1024 / 1024
+          print(f"Downloaded {OUTPUT_PATH} ({size:.1f} MiB)")
+          PYEOF
+      - name: Run compile
+        run: python compile.py
+      - name: Upload context binary
         uses: actions/upload-artifact@v4
         with:
-          name: qnn-binary
-          path: model_qnn.bin
+          name: mobileclip-image-qnn-bin
+          path: mobileclip_image_qnn.bin
+          if-no-files-found: error
