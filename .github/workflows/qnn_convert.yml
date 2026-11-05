@@ -43,13 +43,26 @@ jobs:
               calib_ds = hub.upload_dataset(calib)
               print(f"calib uploaded: {calib_ds}", flush=True)
 
-              quant_job = hub.submit_quantize_job(
-                  model=model,
-                  calibration_data=calib_ds,
-                  weights_dtype=hub.QuantizeDtype.INT8,
-                  activations_dtype=hub.QuantizeDtype.INT8,
-                  name="mobileclip quantize w8a8",
-              )
+              # 关键改动：加 --range_scheme min_max 改变 AIMET 决策
+              try:
+                  quant_job = hub.submit_quantize_job(
+                      model=model,
+                      calibration_data=calib_ds,
+                      weights_dtype=hub.QuantizeDtype.INT8,
+                      activations_dtype=hub.QuantizeDtype.INT8,
+                      options="--range_scheme min_max",
+                      name="mobileclip quantize w8a8 minmax",
+                  )
+              except Exception as e:
+                  print(f"with options failed: {e}", flush=True)
+                  print("retry without options", flush=True)
+                  quant_job = hub.submit_quantize_job(
+                      model=model,
+                      calibration_data=calib_ds,
+                      weights_dtype=hub.QuantizeDtype.INT8,
+                      activations_dtype=hub.QuantizeDtype.INT8,
+                      name="mobileclip quantize w8a8",
+                  )
               print(f"quant job: {quant_job.job_id}", flush=True)
               quant_job.wait()
               st = quant_job.get_status()
@@ -58,13 +71,13 @@ jobs:
                   sys.exit(1)
               quant_model = quant_job.get_target_model()
 
-              # 关键：compile 阶段强制 UINT8
+              # compile 用干净的 options（不带 qnn_options）
               compile_job = hub.submit_compile_job(
                   model=quant_model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
-                  options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io --qnn_options default_graph_htp_precision=UINT8",
-                  name="mobileclip compile uint8 forced",
+                  options="--target_runtime qnn_dlc --quantize_io --truncate_64bit_io",
+                  name="mobileclip compile minmax",
               )
               print(f"compile job: {compile_job.job_id}", flush=True)
               compile_job.wait()
@@ -73,12 +86,12 @@ jobs:
               if st != "SUCCESS":
                   sys.exit(1)
 
-              # link 阶段也强制 UINT8
+              # link 也用干净 options
               link_job = hub.submit_link_job(
                   models=[compile_job.get_target_model()],
                   device=device,
-                  options="--qnn_options default_graph_htp_precision=UINT8",
-                  name="mobileclip link uint8 forced",
+                  options="",
+                  name="mobileclip link minmax",
               )
               print(f"link job: {link_job.job_id}", flush=True)
               link_job.wait()
