@@ -1,0 +1,43 @@
+
+name: Extract QNN runtime from ORT wheel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Download onnxruntime-qnn wheel (manylinux aarch64)
+        run: |
+          python -m pip download onnxruntime-qnn --platform manylinux2014_aarch64 --only-binary=:all: --no-deps -d /tmp/wheels 2>&1 | tail -20
+          ls -la /tmp/wheels/ || echo "no wheel"
+          python -m pip download onnxruntime-qnn --no-deps -d /tmp/wheels_x86 2>&1 | tail -10
+          ls -la /tmp/wheels_x86/ || echo "no x86 wheel"
+      - name: Unpack wheel
+        run: |
+          mkdir -p /tmp/extracted
+          for whl in /tmp/wheels/*.whl /tmp/wheels_x86/*.whl; do
+            if [ -f "$whl" ]; then
+              echo "=== unpacking $whl ==="
+              unzip -o -q "$whl" -d /tmp/extracted 2>&1 | tail -5
+            fi
+          done
+          find /tmp/extracted -name "*.so" | head -40
+          find /tmp/extracted -name "*Qnn*" | head -20
+      - name: Collect all QNN libs
+        run: |
+          mkdir -p /tmp/out
+          find /tmp/extracted -type f -name "libQnn*.so*" -exec cp -v {} /tmp/out/ \;
+          find /tmp/extracted -type f -name "*.so" | xargs -I {} sh -c 'basename {} | grep -i qnn' | sort -u
+          ls -lh /tmp/out/
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-libs-from-ort
+          path: /tmp/out/*
+          if-no-files-found: warn
