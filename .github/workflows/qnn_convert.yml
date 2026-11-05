@@ -48,10 +48,10 @@ jobs:
               device = hub.Device("Samsung Galaxy S21 (Family)")
 
               try:
-                  # 注意：返回单个 LinkJob，不是 (compile_jobs, link_job)
-                  link_job = hub.submit_compile_and_link_jobs(
+                  compile_jobs, link_job = hub.submit_compile_and_link_jobs(
                       models=["mobileclip_image.onnx"],
                       device=device,
+                      graph_names=["mobileclip"],  # 关键：传列表时 graph_names 是必须的
                       input_specs={"pixel_values": (1, 3, 224, 224)},
                       compile_options="--truncate_64bit_io",
                       link_options="",
@@ -61,10 +61,13 @@ jobs:
                   traceback.print_exc()
                   return 1
 
+              if link_job is None:
+                  print("link_job is None, compile may have failed")
+                  return 1
+
               link_job.wait()
               status = link_job.get_status()
               print(f"link job status: {status}")
-              print(f"job: {link_job}")
 
               if status != "SUCCESS":
                   return 1
