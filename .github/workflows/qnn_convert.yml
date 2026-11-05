@@ -35,7 +35,7 @@ jobs:
           MODEL_PATH = "mobileclip_image.onnx"
           OUTPUT_PATH = "mobileclip_image_qnn.bin"
 
-          device = hub.Device("Samsung Galaxy S23")
+          device = hub.Device("Samsung Galaxy S23 (Family)")
 
           compile_jobs, link_job = hub.submit_compile_and_link_jobs(
               models=[MODEL_PATH],
