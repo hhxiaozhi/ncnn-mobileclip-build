@@ -21,11 +21,14 @@ jobs:
       - name: Export MobileNetV2 ONNX
         run: |
           python -c "
-          import torch, torchvision
+          import torch, torchvision, onnx
           model = torchvision.models.mobilenet_v2(pretrained=True).eval()
           dummy = torch.randn(1, 3, 224, 224)
-          torch.onnx.export(model, dummy, 'mobilenet_v2.onnx', opset_version=13, input_names=['input'])
-          print('Exported mobilenet_v2.onnx')
+          torch.onnx.export(model, dummy, 'mobilenet_v2_raw.onnx', opset_version=13, input_names=['input'])
+          # 强制内嵌所有外部权重数据
+          m = onnx.load('mobilenet_v2_raw.onnx')
+          onnx.save(m, 'mobilenet_v2.onnx', save_as_external_data=False)
+          print('Exported and inlined mobilenet_v2.onnx')
           "
       - name: Configure qai-hub
         env:
@@ -43,9 +46,8 @@ jobs:
               model="mobilenet_v2.onnx",
               device=device,
               input_specs={"input": (1, 3, 224, 224)},
-              # 换成了官方报错提示中支持的 precompiled_qnn_onnx
               options="--target_runtime precompiled_qnn_onnx --quantize_full_type float16 --truncate_64bit_io",
-              name="mobilenet_v2 test v6",
+              name="mobilenet_v2 test v7",
           )
           print(f"Submitted compile job: {compile_job.job_id}")
 
