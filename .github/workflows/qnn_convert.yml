@@ -1,4 +1,3 @@
-
 name: Compile MobileCLIP to QNN Context Binary
 
 on:
@@ -27,9 +26,9 @@ jobs:
           QAI_HUB_API_TOKEN: ${{ secrets.QAI_HUB_API_TOKEN }}
         run: |
           qai-hub configure --api_token $QAI_HUB_API_TOKEN
-      - name: Compile (fp32 -> qnn_dlc + float16 + quantize_io)
+      - name: Compile + Link
         run: |
-          cat > step1_compile.py <<'PYEOF'
+          cat > run.py <<'PYEOF'
           import sys, traceback
           import qai_hub as hub
 
@@ -37,29 +36,46 @@ jobs:
           try:
               model = hub.upload_model("mobileclip_image.onnx")
               print(f"model uploaded: {model}", flush=True)
-              job = hub.submit_compile_job(
+
+              # Step 1: compile
+              compile_job = hub.submit_compile_job(
                   model=model,
                   device=device,
                   input_specs={"pixel_values": (1,3,224,224)},
                   options="--target_runtime qnn_dlc --quantize_full_type float16 --quantize_io --truncate_64bit_io",
                   name="mobileclip compile fp16 io",
               )
-              print(f"submitted: {job.job_id}", flush=True)
-              job.wait()
-              st = job.get_status()
+              print(f"compile job: {compile_job.job_id}", flush=True)
+              compile_job.wait()
+              st = compile_job.get_status()
               print(f"compile status: {st}", flush=True)
               if st != "SUCCESS":
                   sys.exit(1)
-              job.download_target_model("compiled_model.zip")
-              print("downloaded compiled_model.zip", flush=True)
+
+              # Step 2: link
+              link_job = hub.submit_link_job(
+                  models=[compile_job.get_target_model()],
+                  device=device,
+                  options="",
+                  name="mobileclip link fp16 io",
+              )
+              print(f"link job: {link_job.job_id}", flush=True)
+              link_job.wait()
+              st = link_job.get_status()
+              print(f"link status: {st}", flush=True)
+              if st != "SUCCESS":
+                  sys.exit(1)
+
+              link_job.download_target_model("mobileclip_qnn.bin")
+              print("downloaded mobileclip_qnn.bin", flush=True)
           except Exception:
               traceback.print_exc()
               sys.exit(1)
           PYEOF
-          python step1_compile.py
-      - name: Upload compiled model
+          python run.py
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: compiled_model
-          path: compiled_model.zip
+          name: mobileclip-qnn
+          path: "*.bin"
           if-no-files-found: error
