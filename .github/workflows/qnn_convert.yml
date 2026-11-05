@@ -15,7 +15,7 @@ jobs:
           python-version: "3.10"
       - name: Install Deps
         run: |
-          pip install torch torchvision onnx "qai-hub[onnx]==0.34.1"
+          pip install torch torchvision onnx "qai-hub[onnx]"
       - name: Export MobileNetV2 ONNX
         run: |
           python -c "
@@ -42,7 +42,7 @@ jobs:
               device=device,
               input_specs={"input": (1, 3, 224, 224)},
               options="--target_runtime qnn_context_binary --quantize_full_type float16 --qairt_version 2.31 --truncate_64bit_io",
-              name="mobilenet_v2 test v2",
+              name="mobilenet_v2 test v3",
           )
           print(f"Submitted compile job: {compile_job.job_id}")
 
