@@ -14,7 +14,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y wget unzip
 
-      - name: Download QAIRT SDK 2.31 (headers only need)
+      - name: Download QAIRT SDK 2.31
         run: |
           wget -q --show-progress \
             "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.31.0.250130.zip" \
@@ -23,7 +23,12 @@ jobs:
           ROOT=$(find qairt_extracted -maxdepth 3 -type d -name 'include' -printf '%h\n' | head -1)
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
           echo "=== detected QNN root: $ROOT ==="
-          ls $ROOT/include/QNN 2>/dev/null | head -20
+          echo "=== all Qnn* headers under SDK ==="
+          find qairt_extracted -name 'Qnn*.h' | head -60
+          echo "=== all include dirs ==="
+          find qairt_extracted -type d -name 'include' | head -20
+          echo "=== specific: QnnSystemInterface.h ==="
+          find qairt_extracted -name 'QnnSystemInterface.h'
 
       - name: Setup Android NDK r25c
         run: |
@@ -35,11 +40,15 @@ jobs:
         run: |
           CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
           $CLANG --version
-          echo "=== QNN_SDK_ROOT=$QNN_SDK_ROOT ==="
-          ls $QNN_SDK_ROOT/include/QNN | head -20
-          $CLANG -O2 -o siglip2_infer siglip2_infer.c \
-            -I$QNN_SDK_ROOT/include/QNN \
-            -ldl -llog
+          # build include paths: SDK/include/QNN + any dir containing QnnSystemInterface.h
+          INCS="-I$QNN_SDK_ROOT/include/QNN"
+          SYS_DIR=$(find qairt_extracted -name 'QnnSystemInterface.h' -printf '%h\n' | head -1)
+          if [ -n "$SYS_DIR" ]; then
+            INCS="$INCS -I$SYS_DIR"
+            echo "using extra include: $SYS_DIR"
+          fi
+          echo "INCS=$INCS"
+          $CLANG -O2 -o siglip2_infer siglip2_infer.c $INCS -ldl -llog
           echo "=== build done ==="
           ls -lh siglip2_infer
           file siglip2_infer
