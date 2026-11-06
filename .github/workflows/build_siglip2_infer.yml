@@ -1,0 +1,52 @@
+name: Build SigLIP2 QNN infer binary (aarch64 bionic)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y wget unzip
+
+      - name: Download QAIRT SDK 2.31 (headers only need)
+        run: |
+          wget -q --show-progress \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.31.0.250130.zip" \
+            -O qairt.zip
+          unzip -q qairt.zip -d qairt_extracted
+          ROOT=$(find qairt_extracted -maxdepth 3 -type d -name 'include' -printf '%h\n' | head -1)
+          echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
+          echo "=== detected QNN root: $ROOT ==="
+          ls $ROOT/include/QNN 2>/dev/null | head -20
+
+      - name: Setup Android NDK r25c
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "NDK=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Cross-compile SigLIP2 infer
+        run: |
+          CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          $CLANG --version
+          echo "=== QNN_SDK_ROOT=$QNN_SDK_ROOT ==="
+          ls $QNN_SDK_ROOT/include/QNN | head -20
+          $CLANG -O2 -o siglip2_infer siglip2_infer.c \
+            -I$QNN_SDK_ROOT/include/QNN \
+            -ldl -llog
+          echo "=== build done ==="
+          ls -lh siglip2_infer
+          file siglip2_infer
+          readelf -l siglip2_infer | grep -A1 INTERP
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglip2-infer-binary
+          path: siglip2_infer
