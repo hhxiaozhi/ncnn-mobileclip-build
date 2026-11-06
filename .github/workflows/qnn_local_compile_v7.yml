@@ -1,0 +1,86 @@
+name: Compile MobileCLIP to QNN (v7 - minimal deps + debug)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install minimal deps (no version pins)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy onnx pyyaml protobuf
+          echo "=== pip list ==="
+          pip list 2>&1
+          echo ""
+          echo "=== import onnx 测试 ==="
+          python -c "import onnx; print('onnx version:', onnx.__version__); print('AttributeProto:', type(onnx.AttributeProto)); print('ok')" 2>&1
+          echo ""
+          echo "=== import protobuf 测试 ==="
+          python -c "import google.protobuf; print('protobuf', google.protobuf.__version__)" 2>&1
+
+      - name: Download QAIRT SDK 2.31
+        run: |
+          QAIRT_VERSION="2.31.0.250130"
+          URL="https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v${QAIRT_VERSION}.zip"
+          wget -q "$URL" -O qairt.zip
+          unzip -q qairt.zip -d qairt_extracted
+          echo "QNN_SDK_ROOT=$(pwd)/qairt_extracted/qairt/2.31.0.250130" >> $GITHUB_ENV
+
+      - name: Debug - dump SDK structure
+        run: |
+          echo "=== SDK bin 目录 ==="
+          ls -la $QNN_SDK_ROOT/bin/x86_64-linux-clang/ | head -40
+          echo ""
+          echo "=== qnn-onnx-converter 前 50 行 ==="
+          head -50 $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter
+          echo ""
+          echo "=== 检查 SDK 内置 requirements ==="
+          find $QNN_SDK_ROOT -name "requirements*.txt" 2>/dev/null
+          echo ""
+          echo "=== source envsetup 后 import 测试 ==="
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          python -c "import onnx; print('with envsetup onnx:', onnx.__version__)" 2>&1
+          python -c "import sys; sys.path.insert(0, '$QNN_SDK_ROOT/lib/python'); from qti.aisw.converters import onnx; print('converter import OK')" 2>&1 | head -40
+
+      - name: Download ONNX Model
+        run: |
+          wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
+          ls -lh mobileclip_image.onnx
+
+      - name: Step 1 - Try converter
+        run: |
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          mkdir -p out
+          # 先试 --help，捕获所有错误
+          echo "=== qnn-onnx-converter --help ==="
+          qnn-onnx-converter --help 2>&1 | head -100
+          echo ""
+          echo "=== 实际转换 ==="
+          qnn-onnx-converter \
+            --input_network mobileclip_image.onnx \
+            --input_dim pixel_values 1,3,224,224 \
+            --act_bias_bitwidth 16 --act_bitwidth 16 \
+            --weight_bias_bitwidth 16 --weight_bitwidth 16 \
+            --output_path out/mobileclip_model.cpp \
+            2>&1 | tee out/step1_convert.log
+          echo "转换退出码: $?"
+          ls -lh out/
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-debug-v7
+          path: |
+            out/*.log
+            out/mobileclip_model.*
+          if-no-files-found: warn
