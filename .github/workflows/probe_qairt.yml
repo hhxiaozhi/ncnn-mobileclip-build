@@ -1,0 +1,30 @@
+name: Probe QAIRT 2.51 download URL
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Try multiple QAIRT 2.51 URLs
+        run: |
+          set +e
+          for url in \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.51.0.260929.zip" \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.51.0.260929181845.zip" \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.50.0.260828.zip" \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.50.0.260828221209.zip" \
+            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.50.0.250226.zip"; do
+            echo ""
+            echo "=== TRY: $url ==="
+            code=$(curl -s -o /tmp/test.zip -w "%{http_code}" -L "$url" --max-time 60 || echo "ERR")
+            echo "http_code: $code  size: $(stat -c%s /tmp/test.zip 2>/dev/null || echo 0)"
+            if [ "$code" = "200" ] && [ $(stat -c%s /tmp/test.zip 2>/dev/null) -gt 1000000 ]; then
+              echo "*** WORKING URL: $url ***"
+              echo "$url" > /tmp/working_url.txt
+              break
+            fi
+          done
+          echo ""
+          echo "done"
