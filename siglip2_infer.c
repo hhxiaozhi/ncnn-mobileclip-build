@@ -1,4 +1,4 @@
-// siglip2_infer.c v2 —— 用 QnnSystemContext 提取模型真实 tensor
+// siglip2_infer.c v3 —— 适配 QNN 2.31 QnnSystemContext API
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +9,7 @@
 #include "QnnInterface.h"
 #include "QnnTypes.h"
 #include "QnnSystemInterface.h"
+#include "QnnSystemContext.h"
 
 struct remote_rpc_control_unsigned_module { int32_t domain; int32_t enable; };
 #define DSPRPC_CONTROL_UNSIGNED_MODULE 2
@@ -76,7 +77,6 @@ int main(int argc, char** argv) {
     void* h_htp = dlopen(s_htp, RTLD_NOW | RTLD_GLOBAL);
     if (!h_htp) { fprintf(stderr, "[qnn] htp: %s\n", dlerror()); return 2; }
 
-    // ---- QNN core ----
     typedef Qnn_ErrorHandle_t (*gp_t)(const QnnInterface_t***, uint32_t*);
     gp_t gp = (gp_t)dlsym(h_htp, "QnnInterface_getProviders");
     const QnnInterface_t** pv = NULL; uint32_t num = 0;
@@ -85,59 +85,66 @@ int main(int argc, char** argv) {
     QNN_INTERFACE_VER_TYPE qnn = pv[0]->QNN_INTERFACE_VER_NAME;
     fprintf(stderr, "[qnn] providers=%u name=%s\n", num, pv[0]->providerName ? pv[0]->providerName : "?");
 
-    // ---- QnnSystem ----
     typedef Qnn_ErrorHandle_t (*sys_gp_t)(const QnnSystemInterface_t***, uint32_t*);
     sys_gp_t sys_gp = (sys_gp_t)dlsym(h_sys, "QnnSystemInterface_getProviders");
-    if (!sys_gp) { fprintf(stderr, "[sys] no gp: %s\n", dlerror()); return 2; }
     const QnnSystemInterface_t** spv = NULL; uint32_t snum = 0;
     e = sys_gp(&spv, &snum);
     if (e != QNN_SUCCESS || snum == 0) { fprintf(stderr, "[sys] gp err=%lu\n", (unsigned long)e); return 2; }
     QNN_SYSTEM_INTERFACE_VER_TYPE sys = spv[0]->QNN_SYSTEM_INTERFACE_VER_NAME;
     fprintf(stderr, "[sys] providers=%u\n", snum);
 
-    // ---- log/backend/device ----
     Qnn_LogHandle_t log = NULL;
     e = qnn.logCreate(NULL, QNN_LOG_LEVEL_ERROR, &log);
     Qnn_BackendHandle_t be = NULL;
     e = qnn.backendCreate(log, NULL, &be);
-    fprintf(stderr, "[backend] err=%lu be=%p\n", (unsigned long)e, (void*)be);
+    fprintf(stderr, "[backend] err=%lu\n", (unsigned long)e);
     if (e != QNN_SUCCESS) return 3;
     Qnn_DeviceHandle_t dev = NULL;
     e = qnn.deviceCreate(log, NULL, &dev);
-    fprintf(stderr, "[device] err=%lu dev=%p\n", (unsigned long)e, (void*)dev);
+    fprintf(stderr, "[device] err=%lu\n", (unsigned long)e);
     if (e != QNN_SUCCESS) return 3;
 
-    // ---- load binary ----
     size_t bin_sz = 0;
     void* bin_buf = read_file(bin_path, &bin_sz);
     if (!bin_buf) return 4;
     fprintf(stderr, "[ctx] sz=%zu\n", bin_sz);
 
-    // ---- getBinaryInfo（关键！）----
+    // ---- QnnSystemContext ----
     QnnSystemContext_Handle_t sysctx = NULL;
     e = sys.systemContextCreate(&sysctx);
-    fprintf(stderr, "[sysctx] err=%lu h=%p\n", (unsigned long)e, (void*)sysctx);
+    fprintf(stderr, "[sysctx] err=%lu\n", (unsigned long)e);
     if (e != QNN_SUCCESS) return 5;
 
     const QnnSystemContext_BinaryInfo_t* bin_info = NULL;
-    Qnn_SystemBinaryInfoVersion_t bin_ver = QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3;
-    e = sys.systemContextGetBinaryInfo(sysctx, bin_buf, bin_sz, &bin_info, &bin_ver);
-    fprintf(stderr, "[binInfo] err=%lu ver=%u ptr=%p\n", (unsigned long)e, (unsigned)bin_ver, (void*)bin_info);
+    Qnn_ContextBinarySize_t bin_info_size = 0;
+    e = sys.systemContextGetBinaryInfo(sysctx, bin_buf, bin_sz, &bin_info, &bin_info_size);
+    fprintf(stderr, "[binInfo] err=%lu size=%lu ver=%u\n",
+            (unsigned long)e, (unsigned long)bin_info_size,
+            bin_info ? (unsigned)bin_info->version : 0);
     if (e != QNN_SUCCESS || !bin_info) return 5;
 
     uint32_t ng = 0;
     const QnnSystemContext_GraphInfo_t* graphs = NULL;
-    if (bin_ver == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3 && bin_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
-        ng = bin_info->v3.numGraphs;
-        graphs = bin_info->v3.graphs;
+    if (bin_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
+        ng = bin_info->contextBinaryInfoV3.numGraphs;
+        graphs = bin_info->contextBinaryInfoV3.graphs;
     } else if (bin_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
-        ng = bin_info->v2.numGraphs;
-        graphs = bin_info->v2.graphs;
+        ng = bin_info->contextBinaryInfoV2.numGraphs;
+        graphs = bin_info->contextBinaryInfoV2.graphs;
     } else if (bin_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
-        ng = bin_info->v1.numGraphs;
-        graphs = bin_info->v1.graphs;
+        ng = bin_info->contextBinaryInfoV1.numGraphs;
+        graphs = bin_info->contextBinaryInfoV1.graphs;
     }
-    fprintf(stderr, "[binInfo] graphs=%u info.version=%u\n", ng, (unsigned)bin_info->version);
+    fprintf(stderr, "[binInfo] graphs=%u\n", ng);
+
+    // 遍历 graph 打名字
+    for (uint32_t i = 0; i < ng && graphs; i++) {
+        if (graphs[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+            const QnnSystemContext_GraphInfoV3_t* g = &graphs[i].graphInfoV3;
+            fprintf(stderr, "[graph %u] name=%s in=%u out=%u\n",
+                    i, g->graphName ? g->graphName : "?", g->numGraphInputs, g->numGraphOutputs);
+        }
+    }
 
     Qnn_ContextHandle_t ctx = NULL;
     e = qnn.contextCreateFromBinary(be, dev, NULL, bin_buf, bin_sz, &ctx, NULL);
@@ -149,11 +156,15 @@ int main(int argc, char** argv) {
     fprintf(stderr, "[graph] err=%lu\n", (unsigned long)e);
     if (e != QNN_SUCCESS) return 6;
 
-    // ---- 从 graphInfo 里 memcpy 真实 tensor ----
-    if (ng == 0 || !graphs) { fprintf(stderr, "[x] no graphs in binary info\n"); return 7; }
-    const QnnSystemContext_GraphInfoV3_t* g3 = &graphs[0].graphInfoV3;
-    fprintf(stderr, "[graph0] name=%s in=%u out=%u\n",
-            g3->graphName ? g3->graphName : "?", g3->numGraphInputs, g3->numGraphOutputs);
+    // ---- 找匹配的 graphInfo ----
+    const QnnSystemContext_GraphInfoV3_t* g3 = NULL;
+    for (uint32_t i = 0; i < ng && graphs; i++) {
+        if (graphs[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_3) {
+            const QnnSystemContext_GraphInfoV3_t* c = &graphs[i].graphInfoV3;
+            if (c->graphName && strcmp(c->graphName, "siglip2_model") == 0) { g3 = c; break; }
+        }
+    }
+    if (!g3) { fprintf(stderr, "[x] graph 'siglip2_model' not found in bin_info\n"); return 7; }
 
     Qnn_Tensor_t in_t, out_t;
     memset(&in_t, 0, sizeof(in_t));
@@ -163,16 +174,14 @@ int main(int argc, char** argv) {
     dump_tensor("in_real",  &in_t);
     dump_tensor("out_real", &out_t);
 
-    // ---- 准备数据 ----
     size_t in_read = 0;
     void* in_data = read_file(in_path, &in_read);
     if (!in_data) return 8;
     uint32_t in_bytes = in_t.v2.clientBuf.dataSize;
     if (in_bytes == 0) {
-        // 从 rank/dims 推算
         uint32_t n = 1;
         for (uint32_t i = 0; i < in_t.v2.rank; i++) n *= in_t.v2.dimensions[i];
-        in_bytes = n * 2;  // fp16
+        in_bytes = n * 2;
     }
     fprintf(stderr, "[in] want=%u got=%zu\n", in_bytes, in_read);
 
@@ -192,7 +201,6 @@ int main(int argc, char** argv) {
     out_t.v2.clientBuf.data = out_data;
     out_t.v2.clientBuf.dataSize = out_bytes;
 
-    // ---- 执行 ----
     double a = now_ms();
     e = qnn.graphExecute(graph, &in_t, 1, &out_t, 1, NULL, NULL);
     double b = now_ms();
