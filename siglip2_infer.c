@@ -156,8 +156,8 @@ int main(int argc, char** argv) {
     // ---- 固定 256 字节拷贝真实 tensor ----
     uint8_t in_raw[TENSOR_SIZE] = {0};
     uint8_t out_raw[TENSOR_SIZE] = {0};
-    memcpy(in_raw,  g3->graphInputs[0],  TENSOR_SIZE);
-    memcpy(out_raw, g3->graphOutputs[0], TENSOR_SIZE);
+    memcpy(in_raw,  &g3->graphInputs[0],  TENSOR_SIZE);
+    memcpy(out_raw, &g3->graphOutputs[0], TENSOR_SIZE);
 
     fprintf(stderr, "[tensor] sizeof(Qnn_Tensor_t)=%zu TENSOR_SIZE=256\n", sizeof(Qnn_Tensor_t));
     dump_tensor_raw("in_real",  in_raw);
