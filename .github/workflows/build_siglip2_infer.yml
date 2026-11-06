@@ -10,52 +10,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install deps
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y wget unzip
+        run: sudo apt-get update -y && sudo apt-get install -y wget unzip
 
       - name: Download QAIRT SDK 2.31
         run: |
-          wget -q --show-progress \
-            "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.31.0.250130.zip" \
-            -O qairt.zip
+          wget -q "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.31.0.250130.zip" -O qairt.zip
           unzip -q qairt.zip -d qairt_extracted
           ROOT=$(find qairt_extracted -maxdepth 3 -type d -name 'include' -printf '%h\n' | head -1)
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
-          echo "=== detected QNN root: $ROOT ==="
-          echo "=== all Qnn* headers under SDK ==="
-          find qairt_extracted -name 'Qnn*.h' | head -60
-          echo "=== all include dirs ==="
-          find qairt_extracted -type d -name 'include' | head -20
-          echo "=== specific: QnnSystemInterface.h ==="
-          find qairt_extracted -name 'QnnSystemInterface.h'
+          echo "=== QnnSystemContext.h ==="
+          cat $ROOT/include/QNN/System/QnnSystemContext.h
+          echo "=== QnnSystemInterface.h (first 120) ==="
+          sed -n '1,120p' $ROOT/include/QNN/System/QnnSystemInterface.h
 
-      - name: Setup Android NDK r25c
+      - name: Setup NDK
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
           unzip -q android-ndk-r25c-linux.zip
-          echo "NDK=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Cross-compile SigLIP2 infer
+      - name: Cross-compile (expect fail, we only want header dump)
         run: |
-          CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          $CLANG --version
-          # build include paths: SDK/include/QNN + any dir containing QnnSystemInterface.h
-          INCS="-I$QNN_SDK_ROOT/include/QNN"
-          SYS_DIR=$(find qairt_extracted -name 'QnnSystemInterface.h' -printf '%h\n' | head -1)
-          if [ -n "$SYS_DIR" ]; then
-            INCS="$INCS -I$SYS_DIR"
-            echo "using extra include: $SYS_DIR"
-          fi
-          echo "INCS=$INCS"
-          $CLANG -O2 -o siglip2_infer siglip2_infer.c $INCS -ldl -llog
-          echo "=== build done ==="
-          ls -lh siglip2_infer
-          file siglip2_infer
-          readelf -l siglip2_infer | grep -A1 INTERP
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: siglip2-infer-binary
-          path: siglip2_infer
+          CLANG=$(pwd)/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          $CLANG -O2 -o siglip2_infer siglip2_infer.c -I$QNN_SDK_ROOT/include/QNN -I$QNN_SDK_ROOT/include/QNN/System -ldl -llog 2>&1 | head -80 || true
