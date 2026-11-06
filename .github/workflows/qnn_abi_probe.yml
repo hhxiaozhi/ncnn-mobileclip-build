@@ -1,0 +1,208 @@
+name: QNN ABI Probe - QAIRT 2.44.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qnn-abi-probe:
+    name: Verify QNN ABI on ARM64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Install ARM64 compiler and QEMU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user unzip
+
+      - name: Download pinned Qualcomm QAIRT SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          QAIRT_VERSION="2.44.0.260225"
+          SDK_URL="https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/$QAIRT_VERSION/v$QAIRT_VERSION.zip"
+          mkdir -p "$RUNNER_TEMP/qairt"
+          curl --fail --show-error --location --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 1800 "$SDK_URL" -o "$RUNNER_TEMP/qairt/qairt.zip"
+          ls -lh "$RUNNER_TEMP/qairt/qairt.zip"
+          unzip -tq "$RUNNER_TEMP/qairt/qairt.zip"
+
+      - name: Extract only QNN interface headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/qairt/qairt.zip" "$RUNNER_TEMP/qnn_include" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path, PurePosixPath
+          from shutil import copyfileobj
+
+          archive = Path(sys.argv[1])
+          output = Path(sys.argv[2])
+
+          with zipfile.ZipFile(archive) as z:
+              names = z.namelist()
+              candidates = [
+                  n for n in names
+                  if n.endswith("include/QNN/QnnInterface.h")
+              ]
+
+              if len(candidates) != 1:
+                  print("HEADER_CANDIDATES =", candidates[:10])
+                  raise SystemExit("Expected exactly one QNN/QnnInterface.h")
+
+              header = candidates[0]
+              include_prefix = header[:-len("QNN/QnnInterface.h")]
+              count = 0
+
+              for info in z.infolist():
+                  name = info.filename
+                  if not name.startswith(include_prefix + "QNN/"):
+                      continue
+                  if info.is_dir():
+                      continue
+
+                  relative = name[len(include_prefix):]
+                  parts = PurePosixPath(relative).parts
+                  if ".." in parts:
+                      raise SystemExit("Unsafe archive path")
+
+                  destination = output.joinpath(*parts)
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+
+                  with z.open(info) as src, destination.open("wb") as dst:
+                      copyfileobj(src, dst)
+
+                  count += 1
+
+          required = [
+              "QnnInterface.h",
+              "QnnBackend.h",
+              "QnnContext.h",
+              "QnnDevice.h",
+              "QnnTypes.h",
+              "QnnCommon.h",
+          ]
+
+          for name in required:
+              path = output / "QNN" / name
+              if not path.is_file() or path.stat().st_size < 100:
+                  raise SystemExit("Invalid or missing header: " + str(path))
+              print("HEADER_OK", name, path.stat().st_size)
+
+          print("HEADER_COUNT =", count)
+          print("QNN_INCLUDE_DIR =", output)
+
+          with open(Path(sys.argv[2]).parent / "include_path.txt", "w") as f:
+              f.write(str(output))
+          PY
+
+      - name: Compile and run ARM64 ABI probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          QNN_INCLUDE_DIR="$(cat "$RUNNER_TEMP/qairt/include_path.txt")"
+
+          cat > "$RUNNER_TEMP/qnn_abi_probe.c" <<'C'
+          #include <stddef.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <QNN/QnnInterface.h>
+
+          #define STR_HELPER(x) #x
+          #define STR(x) STR_HELPER(x)
+
+          #define QNN_IMPL_T __typeof__(((QnnInterface_t *)0)->QNN_INTERFACE_VER_NAME)
+
+          #define PRINT_SLOT(member)             printf("SLOT_%s=%zu OFFSET_%s=%zu
+",               #member,               offsetof(QNN_IMPL_T, member) / sizeof(void *),               #member,               offsetof(QNN_IMPL_T, member))
+
+          static Qnn_ErrorHandle_t check_device_signature(
+              QnnDevice_CreateFn_t fn,
+              Qnn_LogHandle_t logger,
+              const QnnDevice_Config_t **config,
+              Qnn_DeviceHandle_t *device) {
+              return fn(logger, config, device);
+          }
+
+          static Qnn_ErrorHandle_t check_context_signature(
+              QnnContext_CreateFromBinaryFn_t fn,
+              Qnn_BackendHandle_t backend,
+              Qnn_DeviceHandle_t device,
+              const QnnContext_Config_t **config,
+              const void *binary,
+              Qnn_ContextBinarySize_t size,
+              Qnn_ContextHandle_t *context,
+              Qnn_ProfileHandle_t profile) {
+              return fn(backend, device, config, binary, size, context, profile);
+          }
+
+          int main(void) {
+              printf("SDK_PIN=QAIRT-2.44.0.260225
+");
+              printf("TARGET_ABI=AARCH64
+");
+              printf("POINTER_SIZE=%zu
+", sizeof(void *));
+              printf("QNN_API_VERSION_MAJOR=%d
+", QNN_API_VERSION_MAJOR);
+              printf("QNN_API_VERSION_MINOR=%d
+", QNN_API_VERSION_MINOR);
+
+          #ifdef QNN_API_VERSION_PATCH
+              printf("QNN_API_VERSION_PATCH=%d
+", QNN_API_VERSION_PATCH);
+          #endif
+
+              printf("QNN_INTERFACE_VER_NAME=%s
+", STR(QNN_INTERFACE_VER_NAME));
+              printf("API_VERSION_STRUCT_SIZE=%zu
+", sizeof(Qnn_ApiVersion_t));
+              printf("PROVIDER_STRUCT_SIZE=%zu
+", sizeof(QnnInterface_t));
+              printf("PROVIDER_BACKEND_ID_OFFSET=%zu
+", offsetof(QnnInterface_t, backendId));
+              printf("PROVIDER_NAME_OFFSET=%zu
+", offsetof(QnnInterface_t, providerName));
+              printf("PROVIDER_API_VERSION_OFFSET=%zu
+", offsetof(QnnInterface_t, apiVersion));
+              printf("INTERFACE_IMPLEMENTATION_OFFSET=%zu
+",
+                     offsetof(QnnInterface_t, QNN_INTERFACE_VER_NAME));
+              printf("INTERFACE_IMPLEMENTATION_SIZE=%zu
+", sizeof(QNN_IMPL_T));
+              printf("INTERFACE_SLOT_COUNT=%zu
+", sizeof(QNN_IMPL_T) / sizeof(void *));
+
+              PRINT_SLOT(propertyHasCapability);
+              PRINT_SLOT(backendCreate);
+              PRINT_SLOT(contextCreateFromBinary);
+              PRINT_SLOT(deviceCreate);
+
+              printf("DEVICE_SIGNATURE_COMPILE=OK
+");
+              printf("CONTEXT_SIGNATURE_COMPILE=OK
+");
+
+              (void)&check_device_signature;
+              (void)&check_context_signature;
+
+              return 0;
+          }
+          C
+
+          aarch64-linux-gnu-gcc -std=gnu11 -O2 -Wall -Wextra -Werror -I "$QNN_INCLUDE_DIR" "$RUNNER_TEMP/qnn_abi_probe.c" -o "$RUNNER_TEMP/qnn_abi_probe"
+
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$RUNNER_TEMP/qnn_abi_probe" | tee qnn_abi_report.txt
+
+      - name: Upload ABI report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-abi-report
+          path: qnn_abi_report.txt
+          if-no-files-found: ignore
+          retention-days: 7
