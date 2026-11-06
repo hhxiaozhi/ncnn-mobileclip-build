@@ -1,0 +1,120 @@
+name: Compile MobileCLIP to QNN (v6 - pinned deps)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install pinned deps for QAIRT 2.31
+        run: |
+          python -m pip install --upgrade "pip<24"
+          # QAIRT 2.31 (2025-01) 时代对应的版本
+          pip install "numpy<2.0" "onnx==1.14.1" "protobuf<4.0" "pyyaml<7" \
+            packaging==23.2 pillow<11 opencv-python-headless<5 \
+            tqdm attrs six scipy<1.14 \
+            prettytable pandas<3 matplotlib<4 \
+            networkx "onnxruntime<1.18"
+
+      - name: Download QAIRT SDK 2.31
+        run: |
+          QAIRT_VERSION="2.31.0.250130"
+          URL="https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v${QAIRT_VERSION}.zip"
+          wget -q "$URL" -O qairt.zip
+          unzip -q qairt.zip -d qairt_extracted
+          echo "QNN_SDK_ROOT=$(pwd)/qairt_extracted/qairt/2.31.0.250130" >> $GITHUB_ENV
+
+      - name: DIAG - dump SDK structure and requirements
+        run: |
+          echo "=== SDK 目录结构 ==="
+          find $QNN_SDK_ROOT -maxdepth 2 -type d | head -30
+          echo ""
+          echo "=== 所有 requirements / setup 文件 ==="
+          find $QNN_SDK_ROOT -name "*.txt" -o -name "setup.py" -o -name "*.cfg" -o -name "*.toml" 2>/dev/null | head -30
+          echo ""
+          echo "=== pip list ==="
+          pip list 2>&1
+          echo ""
+          echo "=== python -c import onnx 检查 ==="
+          python -c "import onnx; print('onnx', onnx.__version__); print('AttributeProto', hasattr(onnx, 'AttributeProto'))"
+          echo ""
+          echo "=== 检查 SDK 的 qnn-onnx-converter 前 40 行 ==="
+          head -40 $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter
+
+      - name: Download Android NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "ANDROID_NDK_ROOT=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Download ONNX Model
+        run: |
+          wget -q https://github.com/hhxiaozhi/ncnn-mobileclip-build/releases/download/v1.0-model/mobileclip_image.onnx
+          ls -lh mobileclip_image.onnx
+
+      - name: Verify converter works
+        run: |
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          python -c "from qti.aisw.converters.onnx import onnx_to_ir; print('OK')" 2>&1 | head -30
+          qnn-onnx-converter --version 2>&1 | head -10 || true
+
+      - name: Step 1 - ONNX to C++ (fp16)
+        run: |
+          set -o pipefail
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          mkdir -p out
+          qnn-onnx-converter \
+            --input_network mobileclip_image.onnx \
+            --input_dim pixel_values 1,3,224,224 \
+            --act_bias_bitwidth 16 --act_bitwidth 16 \
+            --weight_bias_bitwidth 16 --weight_bitwidth 16 \
+            --output_path out/mobileclip_model.cpp \
+            2>&1 | tee out/step1_convert.log
+          ls -lh out/
+
+      - name: Step 2 - Generate model library (.so)
+        run: |
+          set -o pipefail
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          mkdir -p out/lib
+          qnn-model-lib-generator \
+            -c out/mobileclip_model.cpp \
+            -b out/mobileclip_model.bin \
+            -o out/lib \
+            --target aarch64-android \
+            2>&1 | tee out/step2_lib.log
+          ls -lh out/lib/
+
+      - name: Step 3 - Generate context binary (v68)
+        run: |
+          set -o pipefail
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          SO_FILE=$(ls out/lib/lib*.so | head -1)
+          mkdir -p out/context
+          qnn-context-binary-generator \
+            --backend $QNN_SDK_ROOT/lib/x86_64-linux-clang/libQnnHtp.so \
+            --model "$SO_FILE" \
+            --output_dir out/context \
+            --binary_file mobileclip_fp16_v68.bin \
+            2>&1 | tee out/step3_context.log || true
+          ls -lhR out/context/ 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-fp16-v68-v6
+          path: |
+            out/**/*.bin
+            out/**/*.so
+            out/*.log
+            out/mobileclip_model.*
+          if-no-files-found: warn
