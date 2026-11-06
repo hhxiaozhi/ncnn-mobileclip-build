@@ -1,5 +1,4 @@
-// siglip2_infer.c v10 —— 完全对齐 MobileCLIP S2 成功方案
-// 核心：memcpy 256 字节（不是 sizeof=144），输出数组按 256 步长手动算地址
+// siglip2_infer.c v11 —— 数组按 144 步长遍历（sizeof），dest 补 0 到 256
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,9 +41,10 @@ static double now_ms(void) {
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
-#define T_SIZE 256   // ★ 关键：runtime 2.51 tensor 步长
+#define T_SIZE 256
+#define T_SRC_STEP sizeof(Qnn_Tensor_t)   // 144，模型 metadata 的数组步长
+#define T_COPY sizeof(Qnn_Tensor_t)       // 144，每元素真实字段
 
-// 2.51 布局偏移
 #define O_VER   0
 #define O_ID    8
 #define O_NAME  16
@@ -54,12 +54,16 @@ static double now_ms(void) {
 #define O_BUF   104
 #define O_BUFSZ 112
 
-static void dump_raw(const char* tag, const uint8_t* p) {
-    fprintf(stderr, "[%s] v=%u id=%u type=%u rank=%u bufsz=%u name=%s\n",
+static void dump_raw(const char* tag, const uint8_t* p, int n) {
+    fprintf(stderr, "[%s] v=%u id=%u type=%u rank=%u name=%s\n",
             tag, *(uint32_t*)(p+O_VER), *(uint32_t*)(p+O_ID),
             *(uint32_t*)(p+O_TYPE), *(uint32_t*)(p+O_RANK),
-            *(uint32_t*)(p+O_BUFSZ),
             *(char**)(p+O_NAME) ? *(char**)(p+O_NAME) : "?");
+    if (n > 0) {
+        fprintf(stderr, "[%s_hex] ", tag);
+        for (int i = 0; i < n; i++) fprintf(stderr, "%02x", p[i]);
+        fprintf(stderr, "\n");
+    }
 }
 
 int main(int argc, char** argv) {
@@ -138,8 +142,8 @@ int main(int argc, char** argv) {
 
     uint32_t nout = g3->numGraphOutputs;
     if (nout > 8) nout = 8;
-    fprintf(stderr, "[graph] in=%u out=%u T_SIZE=%d sizeof=%zu\n",
-            g3->numGraphInputs, nout, T_SIZE, sizeof(Qnn_Tensor_t));
+    fprintf(stderr, "[graph] in=%u out=%u sizeof=%zu T_SIZE=%d\n",
+            g3->numGraphInputs, nout, sizeof(Qnn_Tensor_t), T_SIZE);
 
     Qnn_ContextHandle_t ctx = NULL;
     e = qnn.contextCreateFromBinary(be, dev, NULL, bin_buf, bin_sz, &ctx, NULL);
@@ -148,35 +152,34 @@ int main(int argc, char** argv) {
     e = qnn.graphRetrieve(ctx, "siglip2_model", &graph);
     if (e != QNN_SUCCESS) return 7;
 
-    // ---- 输入：从真实 tensor 数组首地址拷 256 字节 ----
+    // ---- 输入：144 步长，拷 144 字节 + 补 0 到 256 ----
     uint8_t in_raw[T_SIZE] = {0};
-    memcpy(in_raw, (uint8_t*)g3->graphInputs + 0, T_SIZE);   // ★ 256 字节
-    dump_raw("in_real", in_raw);
+    memcpy(in_raw, (uint8_t*)g3->graphInputs + T_SRC_STEP * 0, T_COPY);
+    dump_raw("in_real", in_raw, T_COPY);
 
     uint32_t in_rank = *(uint32_t*)(in_raw + O_RANK);
     uint32_t* in_dims = *(uint32_t**)(in_raw + O_DIMS);
     uint32_t in_elems = 1;
     for (uint32_t i = 0; i < in_rank && i < 8; i++) in_elems *= in_dims[i];
     uint32_t in_bytes = in_elems * 2;
-    fprintf(stderr, "[in] rank=%u elems=%u bytes=%u\n", in_rank, in_elems, in_bytes);
 
     size_t in_read = 0;
     void* in_data = read_file(in_path, &in_read);
     if (!in_data || in_read < in_bytes) { fprintf(stderr, "[in] read=%zu want=%u\n", in_read, in_bytes); return 8; }
     *(uint64_t*)(in_raw + O_BUF) = (uint64_t)in_data;
     *(uint32_t*)(in_raw + O_BUFSZ) = in_bytes;
+    fprintf(stderr, "[in] rank=%u elems=%u bytes=%u\n", in_rank, in_elems, in_bytes);
 
-    // ---- 输出：每个都从 +256*i 拷 256 字节 ----
+    // ---- 输出：144 步长，拷 144 字节 + 补 0 到 256 ----
     uint32_t out_bytes_arr[8] = {0};
     void* out_data_arr[8] = {NULL};
-    uint8_t* out_pair = calloc(1, T_SIZE * nout);   // 连续 256*nout
+    uint8_t* out_pair = calloc(1, T_SIZE * nout);
 
     for (uint32_t i = 0; i < nout; i++) {
-        uint8_t* src = (uint8_t*)g3->graphOutputs + T_SIZE * i;   // ★ 手动 256 步长
         uint8_t tmp[T_SIZE] = {0};
-        memcpy(tmp, src, T_SIZE);
+        memcpy(tmp, (uint8_t*)g3->graphOutputs + T_SRC_STEP * i, T_COPY);
         char tag[32]; snprintf(tag, sizeof(tag), "out%u_real", i);
-        dump_raw(tag, tmp);
+        dump_raw(tag, tmp, 0);
 
         uint32_t rk = *(uint32_t*)(tmp + O_RANK);
         uint32_t* dm = *(uint32_t**)(tmp + O_DIMS);
@@ -187,6 +190,7 @@ int main(int argc, char** argv) {
         *(uint64_t*)(tmp + O_BUF) = (uint64_t)out_data_arr[i];
         *(uint32_t*)(tmp + O_BUFSZ) = out_bytes_arr[i];
         memcpy(out_pair + T_SIZE * i, tmp, T_SIZE);
+        fprintf(stderr, "[out%d] rank=%u elems=%u bytes=%u\n", i, rk, ne, out_bytes_arr[i]);
     }
 
     typedef Qnn_ErrorHandle_t (*gexec_t)(Qnn_GraphHandle_t, const void*, uint32_t, void*, uint32_t, void*, void*);
@@ -196,7 +200,14 @@ int main(int argc, char** argv) {
     e = gexec(graph, in_raw, 1, out_pair, nout, NULL, NULL);
     double b = now_ms();
     fprintf(stderr, "[exec #1] err=%lu %.2f ms\n", (unsigned long)e, b - a);
-    if (e != QNN_SUCCESS) return 9;
+
+    if (e != QNN_SUCCESS) {
+        // 诊断：把 in_raw 完整 256 字节 hex 打出来
+        fprintf(stderr, "[in_full_hex] ");
+        for (int i = 0; i < T_SIZE; i++) fprintf(stderr, "%02x", in_raw[i]);
+        fprintf(stderr, "\n");
+        return 9;
+    }
 
     double total = 0; int ok = 0;
     for (int i = 0; i < iters; i++) {
