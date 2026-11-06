@@ -1,0 +1,87 @@
+name: DIAG - dump SDK internals (v9)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy "onnx==1.14.1" pyyaml protobuf packaging pillow
+          echo "=== pip list ==="
+          pip list 2>&1 | grep -iE "onnx|numpy|protobuf|yaml|packaging"
+
+      - name: Download QAIRT SDK 2.31
+        run: |
+          QAIRT_VERSION="2.31.0.250130"
+          URL="https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v${QAIRT_VERSION}.zip"
+          wget -q "$URL" -O qairt.zip
+          unzip -q qairt.zip -d qairt_extracted
+          echo "QNN_SDK_ROOT=$(pwd)/qairt_extracted/qairt/2.31.0.250130" >> $GITHUB_ENV
+
+      - name: DIAG A - 基础 import 测试
+        run: |
+          echo "=== A1. 无 envsetup 时 import ==="
+          python -c "import onnx; print(onnx.__version__, onnx.__file__, hasattr(onnx, 'AttributeProto'))" 2>&1
+          echo ""
+          echo "=== A2. source envsetup 后 import ==="
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          echo "PYTHONPATH=$PYTHONPATH"
+          echo "sys.path:"
+          python -c "import sys; [print('  '+p) for p in sys.path]" 2>&1
+          echo ""
+          python -c "import onnx; print('onnx:', onnx); print('version:', onnx.__version__ if onnx else 'None'); print('file:', onnx.__file__ if onnx else 'None'); print('AttributeProto:', hasattr(onnx, 'AttributeProto') if onnx else 'None')" 2>&1
+
+      - name: DIAG B - dump qnn-onnx-converter 完整内容
+        run: |
+          echo "=== qnn-onnx-converter 完整文件 ==="
+          wc -l $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter
+          echo "---"
+          cat $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter
+
+      - name: DIAG C - dump SDK 内部 onnx 包 __init__
+        run: |
+          echo "=== qti/aisw/converters/onnx/__init__.py ==="
+          cat $QNN_SDK_ROOT/lib/python/qti/aisw/converters/onnx/__init__.py 2>&1
+          echo ""
+          echo "=== qti/aisw/converters/onnx/util.py 前 300 行 ==="
+          head -300 $QNN_SDK_ROOT/lib/python/qti/aisw/converters/onnx/util.py 2>&1
+
+      - name: DIAG D - grep SDK 内部所有 import onnx 的位置
+        run: |
+          echo "=== 所有 import onnx 的位置 ==="
+          grep -rn "^import onnx\|^    import onnx\|  import onnx" $QNN_SDK_ROOT/lib/python/qti/aisw/converters/ 2>/dev/null | head -30
+          echo ""
+          echo "=== 所有 onnx = None 或 onnx=None ==="
+          grep -rn "onnx *= *None" $QNN_SDK_ROOT/lib/python/qti/aisw/converters/ 2>/dev/null | head -20
+          echo ""
+          echo "=== 所有 try.*import onnx.*except 模式 ==="
+          grep -rn -A2 "try:" $QNN_SDK_ROOT/lib/python/qti/aisw/converters/onnx/*.py 2>/dev/null | head -40
+          echo ""
+          echo "=== 所有 'from . import onnx' 或 'import qti.aisw.converters.onnx' ==="
+          grep -rn "converters.*import.*onnx\|import.*converters.*onnx" $QNN_SDK_ROOT/lib/python/qti/aisw/converters/ 2>/dev/null | head -20
+
+      - name: DIAG E - verbose import onnx 看加载路径
+        run: |
+          source $QNN_SDK_ROOT/bin/envsetup.sh
+          echo "=== PYTHONVERBOSE 看 import onnx ==="
+          PYTHONVERBOSE=1 python -c "import onnx" 2>&1 | grep -iE "onnx|Traceback|Error" | head -30
+
+      - name: Upload diag logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qnn-diag-v9
+          path: |
+            *.txt
+          if-no-files-found: ignore
