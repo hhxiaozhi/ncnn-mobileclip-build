@@ -18,17 +18,26 @@ jobs:
           unzip -q qairt.zip -d qairt_extracted
           ROOT=$(find qairt_extracted -maxdepth 3 -type d -name 'include' -printf '%h\n' | head -1)
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
-          echo "=== QnnSystemContext.h ==="
-          cat $ROOT/include/QNN/System/QnnSystemContext.h
-          echo "=== QnnSystemInterface.h (first 120) ==="
-          sed -n '1,120p' $ROOT/include/QNN/System/QnnSystemInterface.h
 
       - name: Setup NDK
         run: |
           wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
           unzip -q android-ndk-r25c-linux.zip
+          echo "NDK=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Cross-compile (expect fail, we only want header dump)
+      - name: Cross-compile SigLIP2 infer
         run: |
-          CLANG=$(pwd)/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          $CLANG -O2 -o siglip2_infer siglip2_infer.c -I$QNN_SDK_ROOT/include/QNN -I$QNN_SDK_ROOT/include/QNN/System -ldl -llog 2>&1 | head -80 || true
+          CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          $CLANG -O2 -o siglip2_infer siglip2_infer.c \
+            -I$QNN_SDK_ROOT/include/QNN \
+            -I$QNN_SDK_ROOT/include/QNN/System \
+            -ldl -llog
+          echo "=== build done ==="
+          ls -lh siglip2_infer
+          readelf -l siglip2_infer | grep -A1 INTERP
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglip2-infer-binary
+          path: siglip2_infer
