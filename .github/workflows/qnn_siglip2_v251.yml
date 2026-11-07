@@ -20,7 +20,6 @@ jobs:
           wget -q --show-progress \
             "https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.51.40.260930/v2.51.40.260930.zip" \
             -O qairt251.zip
-          ls -lh qairt251.zip
           unzip -q qairt251.zip -d qairt_extracted
           ROOT=$(find qairt_extracted -maxdepth 4 -type d -name bin -printf '%h\n' | head -1)
           ROOT=$(realpath $ROOT)
@@ -28,10 +27,9 @@ jobs:
           echo "PYTHONPATH=$ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
           echo "SDK root = $ROOT"
 
-      - name: Verify converter imports
+      - name: Show converter help (for reference)
         run: |
-          python3 -c "import pandas, onnx, numpy; print('pandas', pandas.__version__, 'onnx', onnx.__version__, 'numpy', numpy.__version__)"
-          $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter --help 2>&1 | head -20
+          $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter --help 2>&1 | grep -E "outdir|output_path|output_dir" | head -10
 
       - name: Download SigLIP2 vision ONNX
         run: |
@@ -48,7 +46,6 @@ jobs:
             --input_network vision_model_fp16.onnx \
             --input_dim pixel_values 1,3,384,384 \
             --float_bitwidth 16 \
-            --outdir out \
             --output_path out/siglip2_v251_model.cpp
           ls -lh out/
 
