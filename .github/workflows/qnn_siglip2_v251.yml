@@ -13,7 +13,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y wget unzip python3-pip
-          pip3 install --quiet onnx numpy onnxruntime
+          pip3 install --quiet onnx onnxruntime pandas numpy pyyaml attrs typing_extensions
 
       - name: Download QAIRT SDK 2.51
         run: |
@@ -27,15 +27,10 @@ jobs:
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
           echo "PYTHONPATH=$ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
           echo "SDK root = $ROOT"
-          echo "--- SDK top-level ---"
-          ls $ROOT
-          echo "--- lib/python ---"
-          ls $ROOT/lib/python/ 2>&1 | head
 
-      - name: Verify converter
+      - name: Verify converter imports
         run: |
-          echo "QNN_SDK_ROOT=$QNN_SDK_ROOT"
-          echo "PYTHONPATH=$PYTHONPATH"
+          python3 -c "import pandas, onnx, numpy; print('pandas', pandas.__version__, 'onnx', onnx.__version__, 'numpy', numpy.__version__)"
           $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter --help 2>&1 | head -20
 
       - name: Download SigLIP2 vision ONNX
@@ -65,7 +60,7 @@ jobs:
             -b out/siglip2_v251_model.bin \
             -o out/lib_siglip2_v251 \
             -t x86_64-linux-clang
-          ls -lh out/lib_siglip2_v251/ 2>&1 || ls -lhR out/lib_siglip2_v251/ 2>&1
+          find out/lib_siglip2_v251 -name '*.so'
 
       - name: Generate context binary (v68)
         run: |
