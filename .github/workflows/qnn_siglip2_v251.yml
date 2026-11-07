@@ -74,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: siglip2-v251-context
-          path: out/context/siglip2_v251_v68.bin
+          path: out/context/*.bin
           retention-days: 7
 
       - name: Upload QNN 2.51 include headers
