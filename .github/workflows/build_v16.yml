@@ -1,0 +1,45 @@
+name: Build SigLIP2 v16 (2.51 graph name + 2.51 headers)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update -y && sudo apt-get install -y wget unzip
+
+      - name: Download QAIRT SDK 2.51 (for headers)
+        run: |
+          wget -q \
+            "https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.51.40.260930/v2.51.40.260930.zip" \
+            -O qairt251.zip
+          unzip -q qairt251.zip -d qairt_extracted
+          ROOT=$(find qairt_extracted -maxdepth 4 -type d -name bin -printf '%h\n' | head -1)
+          ROOT=$(realpath $ROOT)
+          echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
+          ls $ROOT/include/QNN/QnnTypes.h
+
+      - name: Setup NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "NDK=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Cross-compile v16 (2.51 headers + new graph name)
+        run: |
+          CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          $CLANG -O2 -o siglip2_infer_v16 siglip2_infer_v16.c \
+            -I$QNN_SDK_ROOT/include/QNN \
+            -I$QNN_SDK_ROOT/include/QNN/System \
+            -ldl -llog
+          ls -lh siglip2_infer_v16
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglip2-infer-v16
+          path: siglip2_infer_v16
