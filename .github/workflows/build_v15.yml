@@ -1,0 +1,41 @@
+name: Build SigLIP2 v15 resident
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: sudo apt-get update -y && sudo apt-get install -y wget unzip
+
+      - name: Download QAIRT SDK 2.31
+        run: |
+          wget -q "https://softwarecenter.qualcomm.com/api/download/software/qualcomm_neural_processing_sdk/v2.31.0.250130.zip" -O qairt.zip
+          unzip -q qairt.zip -d qairt_extracted
+          ROOT=$(find qairt_extracted -maxdepth 3 -type d -name 'include' -printf '%h\n' | head -1)
+          echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
+
+      - name: Setup NDK
+        run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "NDK=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Cross-compile v15
+        run: |
+          CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          $CLANG -O2 -o siglip2_infer_v15 siglip2_infer_v15.c \
+            -I$QNN_SDK_ROOT/include/QNN \
+            -I$QNN_SDK_ROOT/include/QNN/System \
+            -ldl -llog
+          ls -lh siglip2_infer_v15
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglip2-infer-v15
+          path: siglip2_infer_v15
