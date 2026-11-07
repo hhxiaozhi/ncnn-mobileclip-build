@@ -13,7 +13,9 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y wget unzip python3-pip
-          pip3 install --quiet onnx onnxruntime pandas numpy pyyaml attrs typing_extensions
+          # QNN 2.51 converter 依赖旧版 onnx（onnx.version.version），必须降级
+          pip3 install --quiet "onnx==1.14.1" onnxruntime pandas numpy pyyaml attrs typing_extensions
+          python3 -c "import onnx; print('onnx', onnx.__version__); print('version attr:', hasattr(onnx, 'version'))"
 
       - name: Download QAIRT SDK 2.51
         run: |
@@ -26,10 +28,6 @@ jobs:
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
           echo "PYTHONPATH=$ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
           echo "SDK root = $ROOT"
-
-      - name: Show converter help (for reference)
-        run: |
-          $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter --help 2>&1 | grep -E "outdir|output_path|output_dir" | head -10
 
       - name: Download SigLIP2 vision ONNX
         run: |
