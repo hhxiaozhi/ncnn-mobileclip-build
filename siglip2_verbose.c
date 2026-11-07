@@ -1,8 +1,9 @@
-// siglip2_infer_verbose.c — 带 QNN profile 的版本
+// siglip2_verbose.c — 只开 VERBOSE 日志，不做 profile
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <dlfcn.h>
 #include <time.h>
 
@@ -83,7 +84,6 @@ int main(int argc, char** argv) {
     gp(&pv, &num);
     QNN_INTERFACE_VER_TYPE qnn = pv[0]->QNN_INTERFACE_VER_NAME;
 
-    // 日志级别 VERBOSE
     Qnn_LogHandle_t log = NULL;
     qnn.logCreate(NULL, QNN_LOG_LEVEL_VERBOSE, &log);
 
@@ -147,12 +147,6 @@ int main(int argc, char** argv) {
         out_data_arr[i] = calloc(1, out_bytes_arr[i]);
     }
 
-    // profile 句柄
-    Qnn_ProfileHandle_t profile = NULL;
-    typedef Qnn_ErrorHandle_t (*prof_create_t)(Qnn_BackendHandle_t, Qnn_ProfileHandle_t*);
-    prof_create_t prof_create = (prof_create_t)qnn.profileCreate;
-    if (prof_create) prof_create(be, &profile);
-
     Qnn_Tensor_t in_t;
     memcpy(&in_t, in_real, sizeof(Qnn_Tensor_t));
     in_t.v2.clientBuf.data = in_data;
@@ -170,29 +164,9 @@ int main(int argc, char** argv) {
 
     fprintf(stderr, "[BEFORE EXEC]\n");
     double a = now_ms();
-    Qnn_ErrorHandle_t e = gexec(graph, &in_t, 1, out_t, nout, profile, NULL);
+    Qnn_ErrorHandle_t e = gexec(graph, &in_t, 1, out_t, nout, NULL, NULL);
     double b = now_ms();
     fprintf(stderr, "[EXEC] err=%lu  %.2f ms\n", (unsigned long)e, b - a);
-
-    // 提取 profile
-    if (profile) {
-        typedef Qnn_ErrorHandle_t (*prof_get_t)(Qnn_ProfileHandle_t, Qnn_ProfileEvent_t**, uint32_t*);
-        prof_get_t prof_get = (prof_get_t)qnn.profileGetEvents;
-        if (prof_get) {
-            Qnn_ProfileEvent_t* events = NULL;
-            uint32_t ne = 0;
-            if (prof_get(profile, &events, &ne) == QNN_SUCCESS) {
-                fprintf(stderr, "[PROFILE] %u events\n", ne);
-                for (uint32_t i = 0; i < ne && i < 50; i++) {
-                    fprintf(stderr, "  event[%u] type=%d unit=%d value=%lu\n",
-                        i, (int)events[i].eventType, (int)events[i].unit, (unsigned long)events[i].value);
-                }
-                typedef Qnn_ErrorHandle_t (*prof_free_t)(Qnn_ProfileEvent_t*);
-                prof_free_t pf = (prof_free_t)qnn.profileFreeEvents;
-                if (pf) pf(events);
-            }
-        }
-    }
 
     for (uint32_t i = 0; i < nout; i++) {
         char path[1024];
