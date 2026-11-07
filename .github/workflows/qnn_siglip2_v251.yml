@@ -12,22 +12,37 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y wget unzip
+          sudo apt-get install -y wget unzip python3-pip
+          pip3 install --quiet onnx numpy onnxruntime
 
       - name: Download QAIRT SDK 2.51
         run: |
-          wget -q --show-progress             "https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.51.40.260930/v2.51.40.260930.zip"             -O qairt251.zip
+          wget -q --show-progress \
+            "https://apigwx-aws.qualcomm.com/qsc/public/v1/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.51.40.260930/v2.51.40.260930.zip" \
+            -O qairt251.zip
           ls -lh qairt251.zip
           unzip -q qairt251.zip -d qairt_extracted
-          # 找 SDK 根目录（含 bin/ 和 include/ 的）
           ROOT=$(find qairt_extracted -maxdepth 4 -type d -name bin -printf '%h\n' | head -1)
+          ROOT=$(realpath $ROOT)
           echo "QNN_SDK_ROOT=$ROOT" >> $GITHUB_ENV
+          echo "PYTHONPATH=$ROOT/lib/python:$PYTHONPATH" >> $GITHUB_ENV
           echo "SDK root = $ROOT"
+          echo "--- SDK top-level ---"
           ls $ROOT
+          echo "--- lib/python ---"
+          ls $ROOT/lib/python/ 2>&1 | head
+
+      - name: Verify converter
+        run: |
+          echo "QNN_SDK_ROOT=$QNN_SDK_ROOT"
+          echo "PYTHONPATH=$PYTHONPATH"
+          $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-onnx-converter --help 2>&1 | head -20
 
       - name: Download SigLIP2 vision ONNX
         run: |
-          wget -q --show-progress             "https://huggingface.co/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/vision_model_fp16.onnx"             -O vision_model_fp16.onnx
+          wget -q --show-progress \
+            "https://huggingface.co/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/vision_model_fp16.onnx" \
+            -O vision_model_fp16.onnx
           ls -lh vision_model_fp16.onnx
 
       - name: Convert ONNX to QNN (2.51 converter)
@@ -50,15 +65,17 @@ jobs:
             -b out/siglip2_v251_model.bin \
             -o out/lib_siglip2_v251 \
             -t x86_64-linux-clang
-          ls -lh out/lib_siglip2_v251/
+          ls -lh out/lib_siglip2_v251/ 2>&1 || ls -lhR out/lib_siglip2_v251/ 2>&1
 
       - name: Generate context binary (v68)
         run: |
           set -e
           mkdir -p out/context
+          SO=$(find out/lib_siglip2_v251 -name '*.so' | head -1)
+          echo "model so = $SO"
           $QNN_SDK_ROOT/bin/x86_64-linux-clang/qnn-context-binary-generator \
             --backend $QNN_SDK_ROOT/lib/x86_64-linux-clang/libQnnHtp.so \
-            --model out/lib_siglip2_v251/x86_64-linux-clang/libsiglip2_v251_model.so \
+            --model $SO \
             --binary_file siglip2_v251_v68.bin \
             --output_dir out/context
           ls -lh out/context/
