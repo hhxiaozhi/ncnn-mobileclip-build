@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
     Qnn_ContextHandle_t ctx = NULL;
     if (qnn.contextCreateFromBinary(be, dev, NULL, bin_buf, bin_sz, &ctx, NULL) != QNN_SUCCESS) return 7;
     Qnn_GraphHandle_t graph = NULL;
-    if (qnn.graphRetrieve(ctx, "siglip2_model", &graph) != QNN_SUCCESS) return 7;
+    if (qnn.graphRetrieve(ctx, "siglip2_v251_model", &graph) != QNN_SUCCESS) return 7;
 
     // 准备输入数据
     uint8_t in_real[144] = {0};
